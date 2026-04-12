@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import * as tack from '@tack/js'
+import * as tack from '@tacksdk/js'
 
 export interface TackWidgetProps {
   /** Label on the trigger button */

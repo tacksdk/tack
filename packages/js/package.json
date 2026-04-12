@@ -1,5 +1,5 @@
 {
-  "name": "@tack/js",
+  "name": "@tacksdk/js",
   "version": "0.0.1",
   "description": "Tack feedback SDK — vanilla JS client",
   "license": "MIT",

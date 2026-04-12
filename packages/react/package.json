@@ -1,5 +1,5 @@
 {
-  "name": "@tack/react",
+  "name": "@tacksdk/react",
   "version": "0.0.1",
   "description": "Tack feedback SDK — React component",
   "license": "MIT",
@@ -26,7 +26,7 @@
     "react-dom": ">=18.0.0"
   },
   "dependencies": {
-    "@tack/js": "workspace:*"
+    "@tacksdk/js": "workspace:*"
   },
   "devDependencies": {
     "@types/react": "^18.3.3",

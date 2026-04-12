@@ -6,17 +6,17 @@ Embeddable in-app feedback for web apps. Drop a widget into any React app in min
 
 | Package | Description |
 |---|---|
-| [`@tack/js`](./packages/js) | Vanilla JS client — framework-agnostic core |
-| [`@tack/react`](./packages/react) | React component (`<TackWidget />`) built on `@tack/js` |
+| [`@tacksdk/js`](./packages/js) | Vanilla JS client — framework-agnostic core |
+| [`@tacksdk/react`](./packages/react) | React component (`<TackWidget />`) built on `@tacksdk/js` |
 
 ## Quick start
 
 ```bash
-npm install @tack/react
+npm install @tacksdk/react
 ```
 
 ```tsx
-import { init, TackWidget } from '@tack/react'
+import { init, TackWidget } from '@tacksdk/react'
 
 // Call once at app startup
 init({ apiKey: 'your_project_api_key' })
@@ -37,11 +37,11 @@ Get your API key from [usetack.dev](https://usetack.dev).
 ## Vanilla JS
 
 ```bash
-npm install @tack/js
+npm install @tacksdk/js
 ```
 
 ```ts
-import { init, submit } from '@tack/js'
+import { init, submit } from '@tacksdk/js'
 
 init({ apiKey: 'your_project_api_key' })
 
@@ -54,7 +54,7 @@ await submit({
 
 ## API
 
-### `@tack/js`
+### `@tacksdk/js`
 
 #### `init(config)`
 
@@ -75,7 +75,7 @@ Submits a feedback entry. Automatically attaches `url` and `userAgent`.
 | `userId` | `string` | | Identify the submitting user |
 | `meta` | `object` | | Any additional key/value metadata |
 
-### `@tack/react`
+### `@tacksdk/react`
 
 #### `<TackWidget />`
 
@@ -101,8 +101,8 @@ pnpm dev          # watch mode for all packages
 
 ```
 packages/
-  js/       @tack/js    — vanilla JS client
-  react/    @tack/react — React component
+  js/       @tacksdk/js    — vanilla JS client
+  react/    @tacksdk/react — React component
 ```
 
 ### Releasing
