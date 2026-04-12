@@ -52,3 +52,4 @@ export async function submit(payload: FeedbackPayload): Promise<void> {
 export function getConfig(): TackConfig | null {
   return _config
 }
+// test
