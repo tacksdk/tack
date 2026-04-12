@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# After committing in tack, auto-stage the submodule pointer in tack-app
+# so the parent repo always knows about new commits.
+
+set -euo pipefail
+
+TACK_ROOT="$(git rev-parse --show-toplevel)"
+PARENT_DIR="$(dirname "$TACK_ROOT")"
+PARENT_GIT="$PARENT_DIR/.git"
+
+# Only act if the parent directory is a git repo (i.e. we're used as a submodule)
+if [ ! -e "$PARENT_GIT" ]; then
+  exit 0
+fi
+
+SHORT_SHA="$(git rev-parse --short HEAD)"
+SUBJECT="$(git log -1 --format='%s')"
+
+cd "$PARENT_DIR"
+
+# Stage the submodule pointer update
+git add "$(basename "$TACK_ROOT")" 2>/dev/null || true
+
+echo ""
+echo "  ✔ tack submodule pointer staged in $(basename "$PARENT_DIR") → $SHORT_SHA"
+echo "  ↳ \"$SUBJECT\""
+echo "  Run: cd .. && git commit -m 'chore: bump tack to $SHORT_SHA'"
+echo ""
