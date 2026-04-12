@@ -53,4 +53,3 @@ export function getConfig(): TackConfig | null {
   return _config
 }
 // test
-// e2e hook test
