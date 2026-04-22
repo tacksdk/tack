@@ -11,7 +11,7 @@ export { TackError } from './errors'
 export interface TackConfig {
   /** Public project id from the Tack dashboard, e.g. "proj_..." */
   projectId: string
-  /** Override the API endpoint. Defaults to https://api.usetack.dev */
+  /** Override the API endpoint. Defaults to https://api.tacksdk.com */
   endpoint?: string
   /** Default user attached to every submission */
   user?: TackUser
@@ -19,7 +19,7 @@ export interface TackConfig {
   metadata?: Record<string, unknown>
 }
 
-const DEFAULT_ENDPOINT = 'https://api.usetack.dev'
+const DEFAULT_ENDPOINT = 'https://api.tacksdk.com'
 
 let _config: TackConfig | null = null
 
@@ -85,7 +85,7 @@ export async function submit(input: SubmitInput): Promise<TackFeedbackCreated> {
       {
         type: 'network_error',
         message: err instanceof Error ? err.message : 'Network request failed',
-        doc_url: 'https://usetack.dev/docs/errors#network_error',
+        doc_url: 'https://tacksdk.com/docs/errors#network_error',
       },
       null,
     )
@@ -100,7 +100,7 @@ export async function submit(input: SubmitInput): Promise<TackFeedbackCreated> {
       {
         type: 'internal_error',
         message: `Unexpected ${res.status} response`,
-        doc_url: 'https://usetack.dev/docs/errors#internal_error',
+        doc_url: 'https://tacksdk.com/docs/errors#internal_error',
       },
       res.status,
     )
@@ -111,7 +111,7 @@ export async function submit(input: SubmitInput): Promise<TackFeedbackCreated> {
       {
         type: 'internal_error',
         message: 'Malformed success response',
-        doc_url: 'https://usetack.dev/docs/errors#internal_error',
+        doc_url: 'https://tacksdk.com/docs/errors#internal_error',
       },
       res.status,
     )

@@ -1,6 +1,6 @@
 # Tack
 
-Embeddable in-app feedback for web apps. Drop a widget into any React app in minutes — submissions flow to your [Tack dashboard](https://usetack.dev).
+Embeddable in-app feedback for web apps. Drop a widget into any React app in minutes — submissions flow to your [Tack dashboard](https://tacksdk.com).
 
 ## Packages
 
@@ -16,23 +16,19 @@ npm install @tacksdk/react
 ```
 
 ```tsx
-import { init, TackWidget } from '@tacksdk/react'
+import { TackWidget } from '@tacksdk/react'
 
-// Call once at app startup
-init({ apiKey: 'your_project_api_key' })
-
-// Drop anywhere in your component tree
 export function App() {
   return (
     <>
       <YourApp />
-      <TackWidget />
+      <TackWidget projectId="proj_your_project_id" />
     </>
   )
 }
 ```
 
-Get your API key from [usetack.dev](https://usetack.dev).
+Get your project id from [tacksdk.com](https://tacksdk.com).
 
 ## Vanilla JS
 
@@ -43,12 +39,12 @@ npm install @tacksdk/js
 ```ts
 import { init, submit } from '@tacksdk/js'
 
-init({ apiKey: 'your_project_api_key' })
+init({ projectId: 'proj_your_project_id' })
 
 await submit({
-  message: 'The export button is broken',
-  userId: 'user_123',          // optional
-  meta: { plan: 'pro' },       // optional
+  body: 'The export button is broken',
+  user: { id: 'user_123', email: 'ada@example.com' },
+  metadata: { plan: 'pro' },
 })
 ```
 
@@ -62,18 +58,25 @@ Must be called once before submitting feedback.
 
 | Option | Type | Required | Description |
 |---|---|---|---|
-| `apiKey` | `string` | ✓ | Project API key from the Tack dashboard |
-| `apiUrl` | `string` | | Override the API endpoint (defaults to `https://api.usetack.dev`) |
+| `projectId` | `string` | ✓ | Public project id from the Tack dashboard (`proj_...`) |
+| `endpoint` | `string` | | Override the API endpoint (defaults to `https://api.tacksdk.com`) |
+| `user` | `TackUser` | | Default user attached to every submission |
+| `metadata` | `object` | | Default metadata attached to every submission |
 
-#### `submit(payload)`
+#### `submit(input)`
 
-Submits a feedback entry. Automatically attaches `url` and `userAgent`.
+Submits a feedback entry. Automatically attaches `url`, `userAgent`, and `viewport` unless overridden. Returns `{ id, url, created_at }`.
 
 | Option | Type | Required | Description |
 |---|---|---|---|
-| `message` | `string` | ✓ | Feedback text |
-| `userId` | `string` | | Identify the submitting user |
-| `meta` | `object` | | Any additional key/value metadata |
+| `body` | `string` | ✓ | Feedback text |
+| `rating` | `number` | | Optional rating |
+| `screenshot` | `string` | | Base64-encoded screenshot (data URL) |
+| `user` | `TackUser` | | Overrides the default user |
+| `metadata` | `object` | | Overrides the default metadata |
+| `idempotencyKey` | `string` | | Dedup key (auto-generated if omitted) |
+
+Errors throw a `TackError` with `type`, `docUrl`, and `status`.
 
 ### `@tacksdk/react`
 
@@ -81,16 +84,18 @@ Submits a feedback entry. Automatically attaches `url` and `userAgent`.
 
 | Prop | Type | Default | Description |
 |---|---|---|---|
+| `projectId` | `string` | — | Required. Public project id (`proj_...`) |
+| `endpoint` | `string` | | Override the API endpoint |
 | `label` | `string` | `"Feedback"` | Trigger button label |
-| `userId` | `string` | | Passed to every submission |
-| `meta` | `object` | | Extra metadata on every submission |
+| `user` | `TackUser` | | Passed to every submission |
+| `metadata` | `object` | | Extra metadata on every submission |
 | `onSubmit` | `() => void` | | Called after successful submission |
-| `onError` | `(err: Error) => void` | | Called on error |
+| `onError` | `(err: TackError \| Error) => void` | | Called on error |
 
 ## Contributing
 
 ```bash
-git clone https://github.com/lucascaro/tack
+git clone https://github.com/tacksdk/tack
 cd tack
 pnpm install
 pnpm setup        # install git hooks
@@ -107,12 +112,10 @@ packages/
 
 ### Releasing
 
-This repo uses [Changesets](https://github.com/changesets/changesets).
+This repo uses [Changesets](https://github.com/changesets/changesets). CI (`.github/workflows/release.yml`) opens a "Version Packages" PR on merge to `main`; merging that PR publishes to npm with provenance.
 
 ```bash
 pnpm changeset        # describe your change
-pnpm version          # bump versions + update changelogs
-pnpm release          # build + publish to npm
 ```
 
 ## License
