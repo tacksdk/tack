@@ -1,38 +1,56 @@
-import { useState } from 'react'
-import * as tack from '@tacksdk/js'
+import { useEffect, useRef, useState } from 'react'
+import { init, reset, submit, TackError } from '@tacksdk/js'
+import type { TackUser } from '@tacksdk/js'
 
 export interface TackWidgetProps {
-  /** Label on the trigger button */
+  /** Public project id from the Tack dashboard ("proj_...") */
+  projectId: string
+  /** Override the API endpoint */
+  endpoint?: string
+  /** Button label on the trigger */
   label?: string
-  /** Called after successful submission */
+  /** Optional user attached to submissions */
+  user?: TackUser
+  /** Extra metadata attached to submissions */
+  metadata?: Record<string, unknown>
+  /** Called after a successful submission */
   onSubmit?: () => void
   /** Called on submission error */
-  onError?: (err: Error) => void
-  /** Optional user ID to attach to submissions */
-  userId?: string
-  /** Additional metadata to attach to submissions */
-  meta?: Record<string, unknown>
+  onError?: (err: TackError | Error) => void
 }
 
 type State = 'idle' | 'open' | 'submitting' | 'success' | 'error'
 
 export function TackWidget({
+  projectId,
+  endpoint,
   label = 'Feedback',
+  user,
+  metadata,
   onSubmit,
   onError,
-  userId,
-  meta,
 }: TackWidgetProps) {
   const [state, setState] = useState<State>('idle')
   const [message, setMessage] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const initialized = useRef(false)
+
+  useEffect(() => {
+    init({ projectId, endpoint, user, metadata })
+    initialized.current = true
+    return () => {
+      reset()
+      initialized.current = false
+    }
+  }, [projectId, endpoint, user, metadata])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!message.trim()) return
     setState('submitting')
+    setError(null)
     try {
-      await tack.submit({ message, userId, meta })
+      await submit({ body: message })
       setState('success')
       setMessage('')
       onSubmit?.()
@@ -40,7 +58,7 @@ export function TackWidget({
       const e = err instanceof Error ? err : new Error(String(err))
       setError(e.message)
       setState('error')
-      onError?.(e)
+      onError?.(e as TackError | Error)
     }
   }
 

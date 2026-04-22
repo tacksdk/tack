@@ -15,10 +15,23 @@
     }
   },
   "files": ["dist"],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tacksdk/tack.git",
+    "directory": "packages/react"
+  },
+  "homepage": "https://github.com/tacksdk/tack/tree/main/packages/react#readme",
+  "bugs": "https://github.com/tacksdk/tack/issues",
+  "keywords": ["feedback", "widget", "tack", "react"],
+  "sideEffects": false,
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "lint": "tsc --noEmit"
   },
   "peerDependencies": {
