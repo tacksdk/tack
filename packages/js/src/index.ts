@@ -37,7 +37,7 @@ export function init(config: TackConfig): void {
   // Spread config first, THEN apply the endpoint fallback. If we did the
   // reverse, a caller passing `endpoint: undefined` (common from React
   // wrappers that forward optional props) would overwrite the default with
-  // undefined, and submit() would fetch `undefined/v1/feedback`.
+  // undefined, and submit() would fetch `undefined/api/v1/feedback`.
   _config = { ...config, endpoint: config.endpoint ?? DEFAULT_ENDPOINT }
   if (!config.silent && !_warned && typeof console !== 'undefined') {
     _warned = true
@@ -97,7 +97,7 @@ export async function submit(input: SubmitInput): Promise<TackFeedbackCreated> {
 
   let res: Response
   try {
-    res = await fetch(`${_config.endpoint}/v1/feedback`, {
+    res = await fetch(`${_config.endpoint}/api/v1/feedback`, {
       method: 'POST',
       headers,
       body: JSON.stringify(req),
