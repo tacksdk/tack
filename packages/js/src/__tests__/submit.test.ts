@@ -33,7 +33,7 @@ describe('submit', () => {
     reset()
   })
 
-  it('posts to /v1/feedback with the configured projectId and Idempotency-Key', async () => {
+  it('posts to /api/v1/feedback with the configured projectId and Idempotency-Key', async () => {
     const fakeRes = {
       ok: true,
       status: 200,
@@ -47,7 +47,7 @@ describe('submit', () => {
 
     expect(result).toEqual({ id: 'fbk_1', url: 'x', created_at: 'now' })
     const call = (fetchSpy as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]
-    expect(call[0]).toBe(`${ENDPOINT}/v1/feedback`)
+    expect(call[0]).toBe(`${ENDPOINT}/api/v1/feedback`)
     const init2 = call[1] as RequestInit
     expect(init2.method).toBe('POST')
     const headers = init2.headers as Record<string, string>
