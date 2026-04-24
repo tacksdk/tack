@@ -34,7 +34,11 @@ export function init(config: TackConfig): void {
   if (!config.projectId || typeof config.projectId !== 'string') {
     throw new Error('[tack] init() requires a projectId')
   }
-  _config = { endpoint: DEFAULT_ENDPOINT, ...config }
+  // Spread config first, THEN apply the endpoint fallback. If we did the
+  // reverse, a caller passing `endpoint: undefined` (common from React
+  // wrappers that forward optional props) would overwrite the default with
+  // undefined, and submit() would fetch `undefined/v1/feedback`.
+  _config = { ...config, endpoint: config.endpoint ?? DEFAULT_ENDPOINT }
   if (!config.silent && !_warned && typeof console !== 'undefined') {
     _warned = true
     // Intentional: "no semver" without this warning is undocumented breakage.
