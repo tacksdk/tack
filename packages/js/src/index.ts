@@ -11,7 +11,7 @@ export { TackError } from './errors'
 export interface TackConfig {
   /** Public project id from the Tack dashboard, e.g. "proj_..." */
   projectId: string
-  /** Override the API endpoint. Defaults to https://api.tacksdk.com */
+  /** Override the API endpoint. Defaults to https://tacksdk.com */
   endpoint?: string
   /** Default user attached to every submission */
   user?: TackUser
@@ -21,7 +21,7 @@ export interface TackConfig {
   silent?: boolean
 }
 
-const DEFAULT_ENDPOINT = 'https://api.tacksdk.com'
+const DEFAULT_ENDPOINT = 'https://tacksdk.com'
 // Updated by tsup define at build time. Falls back to the source default so
 // type-check and dev-mode imports from src/ keep working.
 declare const __TACK_VERSION__: string | undefined

@@ -59,7 +59,7 @@ Must be called once before submitting feedback.
 | Option | Type | Required | Description |
 |---|---|---|---|
 | `projectId` | `string` | ✓ | Public project id from the Tack dashboard (`proj_...`) |
-| `endpoint` | `string` | | Override the API endpoint (defaults to `https://api.tacksdk.com`) |
+| `endpoint` | `string` | | Override the API endpoint (defaults to `https://tacksdk.com`) |
 | `user` | `TackUser` | | Default user attached to every submission |
 | `metadata` | `object` | | Default metadata attached to every submission |
 
