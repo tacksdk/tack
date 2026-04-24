@@ -17,17 +17,34 @@ export interface TackConfig {
   user?: TackUser
   /** Default metadata attached to every submission */
   metadata?: Record<string, unknown>
+  /** Suppress the one-time pre-1.0 stability warning. See STABILITY.md. */
+  silent?: boolean
 }
 
 const DEFAULT_ENDPOINT = 'https://api.tacksdk.com'
+// Updated by tsup define at build time. Falls back to the source default so
+// type-check and dev-mode imports from src/ keep working.
+declare const __TACK_VERSION__: string | undefined
+const SDK_VERSION = typeof __TACK_VERSION__ === 'string' ? __TACK_VERSION__ : '0.0.0-dev'
 
 let _config: TackConfig | null = null
+let _warned = false
 
 export function init(config: TackConfig): void {
   if (!config.projectId || typeof config.projectId !== 'string') {
     throw new Error('[tack] init() requires a projectId')
   }
   _config = { endpoint: DEFAULT_ENDPOINT, ...config }
+  if (!config.silent && !_warned && typeof console !== 'undefined') {
+    _warned = true
+    // Intentional: "no semver" without this warning is undocumented breakage.
+    // Pass silent: true once you've read STABILITY.md and pinned a version.
+    console.warn(
+      `[tack] Running SDK v${SDK_VERSION} (pre-1.0). Pin the version and read ` +
+        'STABILITY.md before upgrading: ' +
+        'https://github.com/tacksdk/tack/blob/main/STABILITY.md',
+    )
+  }
 }
 
 export function getConfig(): TackConfig | null {
@@ -36,6 +53,7 @@ export function getConfig(): TackConfig | null {
 
 export function reset(): void {
   _config = null
+  _warned = false
 }
 
 export type SubmitInput = Omit<TackSubmitRequest, 'projectId' | 'url' | 'userAgent' | 'viewport'> & {

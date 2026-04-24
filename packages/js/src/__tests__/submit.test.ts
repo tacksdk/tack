@@ -25,7 +25,7 @@ function mockFetchOnce(response: FetchMockInit) {
 describe('submit', () => {
   beforeEach(() => {
     reset()
-    init({ projectId: 'proj_test', endpoint: ENDPOINT })
+    init({ projectId: 'proj_test', endpoint: ENDPOINT, silent: true })
   })
 
   afterEach(() => {
