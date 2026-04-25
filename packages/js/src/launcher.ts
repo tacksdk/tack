@@ -240,12 +240,21 @@ const TACK_LAUNCHER_CSS = `
   [data-tack-launcher] {
     --tack-launcher-offset: max(16px, env(safe-area-inset-bottom));
   }
-  [data-tack-launcher][data-tack-launcher-variant="circle"] {
+  /* Pill collapses to icon-only on mobile — labels eat horizontal space and
+     the bottom-sheet dialog already announces "Send feedback" via its title. */
+  [data-tack-launcher][data-tack-launcher-variant="circle"],
+  [data-tack-launcher][data-tack-launcher-variant="pill"] {
     width: 52px;
     height: 52px;
+    padding: 0;
+    min-width: 0;
   }
-  [data-tack-launcher][data-tack-launcher-variant="pill"] {
-    height: 48px;
+  [data-tack-launcher][data-tack-launcher-variant="pill"] [data-tack-launcher-label] {
+    display: none;
+  }
+  [data-tack-launcher][data-tack-launcher-variant="pill"] [data-tack-launcher-icon] svg {
+    width: 20px;
+    height: 20px;
   }
   [data-tack-launcher][data-tack-launcher-hide-mobile] {
     display: none;
