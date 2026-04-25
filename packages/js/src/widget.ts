@@ -30,6 +30,25 @@ export interface TackWidgetConfig {
   metadata?: Record<string, unknown>
   /** Container to mount the dialog in. Defaults to document.body. */
   container?: HTMLElement
+  /**
+   * Color scheme. "auto" (default) follows `prefers-color-scheme`. "light"
+   * and "dark" force the corresponding palette regardless of the OS setting.
+   */
+  theme?: 'auto' | 'light' | 'dark'
+  /**
+   * Skip injecting the default stylesheet. Use when the host wants to fully
+   * own the look — target `[data-tack-widget]`, `[data-tack-input]`,
+   * `[data-tack-submit]`, `[data-tack-cancel]` from your own CSS.
+   */
+  injectStyles?: boolean
+  /** Title shown at the top of the dialog. Default: "Send feedback". */
+  title?: string
+  /** Submit button label. Default: "Send". */
+  submitLabel?: string
+  /** Cancel button label. Default: "Cancel". */
+  cancelLabel?: string
+  /** Textarea placeholder. Default: "What can we improve?". */
+  placeholder?: string
   /** Called on successful submit, after the dialog closes. */
   onSubmit?: (result: TackFeedbackCreated) => void
   /** Called on submit failure. The dialog stays open. */
@@ -82,35 +101,47 @@ function init(config: TackWidgetConfig): TackHandle {
   function ensureMounted(): HTMLDialogElement {
     if (state.dialog) return state.dialog
 
+    if (state.config.injectStyles !== false) ensureStylesInjected()
+
     const container = state.config.container ?? document.body
     const dialog = document.createElement('dialog')
     dialog.setAttribute('data-tack-widget', '')
+    if (state.config.theme && state.config.theme !== 'auto') {
+      dialog.setAttribute('data-tack-theme', state.config.theme)
+    }
 
     // Plain form, NOT method="dialog" — we always preventDefault and run
     // submit asynchronously, so the native dialog-form behaviour is unused.
     const form = document.createElement('form')
 
+    const titleEl = document.createElement('h2')
+    titleEl.textContent = state.config.title ?? 'Send feedback'
+    titleEl.setAttribute('data-tack-title', '')
+    titleEl.id = `tack-title-${Math.random().toString(36).slice(2, 8)}`
+    dialog.setAttribute('aria-labelledby', titleEl.id)
+
     const textarea = document.createElement('textarea')
     textarea.required = true
     textarea.rows = 4
-    textarea.placeholder = 'Send feedback'
+    textarea.placeholder = state.config.placeholder ?? 'What can we improve?'
     textarea.setAttribute('data-tack-input', '')
+    textarea.setAttribute('aria-label', state.config.title ?? 'Send feedback')
 
     const actions = document.createElement('div')
     actions.setAttribute('data-tack-actions', '')
 
     const cancelBtn = document.createElement('button')
     cancelBtn.type = 'button'
-    cancelBtn.textContent = 'Cancel'
+    cancelBtn.textContent = state.config.cancelLabel ?? 'Cancel'
     cancelBtn.setAttribute('data-tack-cancel', '')
 
     const submitBtn = document.createElement('button')
     submitBtn.type = 'submit'
-    submitBtn.textContent = 'Send'
+    submitBtn.textContent = state.config.submitLabel ?? 'Send'
     submitBtn.setAttribute('data-tack-submit', '')
 
     actions.append(cancelBtn, submitBtn)
-    form.append(textarea, actions)
+    form.append(titleEl, textarea, actions)
     dialog.append(form)
     container.append(dialog)
 
@@ -205,6 +236,128 @@ function init(config: TackWidgetConfig): TackHandle {
 
   return { open, close, destroy }
 }
+
+/**
+ * Inject the default stylesheet into <head> on first widget open. Idempotent
+ * via a marker `<style data-tack-styles>` element — multiple widgets share
+ * one global block. Call sites can opt out with `injectStyles: false` and
+ * provide their own CSS targeting the documented data-* attributes.
+ */
+function ensureStylesInjected(): void {
+  if (typeof document === 'undefined') return
+  if (document.querySelector('style[data-tack-styles]')) return
+  const style = document.createElement('style')
+  style.setAttribute('data-tack-styles', '')
+  style.textContent = TACK_DEFAULT_CSS
+  document.head.append(style)
+}
+
+const TACK_DEFAULT_CSS = `
+[data-tack-widget] {
+  --tack-bg: #ffffff;
+  --tack-fg: #0f172a;
+  --tack-muted: #64748b;
+  --tack-border: #e2e8f0;
+  --tack-accent: #2563eb;
+  --tack-accent-fg: #ffffff;
+  --tack-radius: 12px;
+  --tack-shadow: 0 20px 60px rgba(15, 23, 42, 0.18);
+  --tack-z-index: 2147483600;
+  --tack-font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  border: 0;
+  padding: 0;
+  border-radius: var(--tack-radius);
+  background: var(--tack-bg);
+  color: var(--tack-fg);
+  box-shadow: var(--tack-shadow);
+  font-family: var(--tack-font-family);
+  max-width: min(420px, calc(100vw - 32px));
+  width: 100%;
+}
+[data-tack-widget]::backdrop {
+  background: rgba(15, 23, 42, 0.45);
+}
+[data-tack-widget] form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px;
+}
+[data-tack-widget] [data-tack-title] {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+[data-tack-widget] [data-tack-input] {
+  font: inherit;
+  color: inherit;
+  background: var(--tack-bg);
+  border: 1px solid var(--tack-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  resize: vertical;
+  min-height: 96px;
+  width: 100%;
+  box-sizing: border-box;
+}
+[data-tack-widget] [data-tack-input]:focus-visible {
+  outline: 2px solid var(--tack-accent);
+  outline-offset: 1px;
+  border-color: var(--tack-accent);
+}
+[data-tack-widget] [data-tack-actions] {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+[data-tack-widget] button {
+  font: inherit;
+  cursor: pointer;
+  border-radius: 8px;
+  padding: 8px 14px;
+  border: 1px solid transparent;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+[data-tack-widget] button:focus-visible {
+  outline: 2px solid var(--tack-accent);
+  outline-offset: 2px;
+}
+[data-tack-widget] [data-tack-cancel] {
+  background: transparent;
+  color: var(--tack-muted);
+  border-color: var(--tack-border);
+}
+[data-tack-widget] [data-tack-cancel]:hover {
+  background: var(--tack-border);
+  color: var(--tack-fg);
+}
+[data-tack-widget] [data-tack-submit] {
+  background: var(--tack-accent);
+  color: var(--tack-accent-fg);
+}
+[data-tack-widget] [data-tack-submit]:hover {
+  filter: brightness(1.05);
+}
+[data-tack-widget] [data-tack-submit]:disabled,
+[data-tack-widget] [data-tack-cancel]:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+[data-tack-widget][data-tack-theme="dark"],
+@media (prefers-color-scheme: dark) {
+  [data-tack-widget]:not([data-tack-theme="light"]) {
+    --tack-bg: #0f172a;
+    --tack-fg: #f8fafc;
+    --tack-muted: #94a3b8;
+    --tack-border: #1e293b;
+    --tack-accent: #60a5fa;
+    --tack-accent-fg: #0f172a;
+    --tack-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  }
+}
+`
 
 /**
  * Public widget API. Use `Tack.init({ projectId })` to mount a widget; the
