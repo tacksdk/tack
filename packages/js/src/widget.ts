@@ -2,26 +2,27 @@
 //
 // Intentionally minimal: native <dialog>, textarea, submit button. No theming,
 // no a11y polish beyond what <dialog> gives for free, no screenshot, no state
-// machine, no error UI. The point is to prove the architecture (returned
-// handle, no module-level singleton, two widgets per page work) so subsequent
-// PRs can layer theming / a11y / capture / lifecycle states on top.
+// machine, no error UI inside the dialog. The point is to prove the
+// architecture (returned handle, no module-level singleton, two widgets per
+// page work, abortable, leak-free destroy) so subsequent PRs can layer
+// theming / a11y / capture / lifecycle states on top.
 //
 // See docs/phase-2-extraction.md "Step 2" for the full spec this is the
 // foundation of.
 
-import { TackError, isTackErrorBody } from './errors'
-import type {
-  TackFeedbackCreated,
-  TackSubmitRequest,
-  TackUser,
-} from './types'
-
-const DEFAULT_ENDPOINT = 'https://api.tacksdk.com'
+import { TackError, docUrl } from './errors'
+import {
+  DEFAULT_ENDPOINT,
+  SDK_VERSION,
+  browserDefaults,
+  postFeedback,
+} from './transport'
+import type { TackFeedbackCreated, TackSubmitRequest, TackUser } from './types'
 
 export interface TackWidgetConfig {
   /** Public project id from the Tack dashboard, e.g. "proj_..." */
   projectId: string
-  /** Override the API endpoint. Defaults to https://api.tacksdk.com */
+  /** Override the API endpoint. Defaults to https://tacksdk.com */
   endpoint?: string
   /** Default user attached to every submission */
   user?: TackUser
@@ -36,16 +37,16 @@ export interface TackWidgetConfig {
 }
 
 export interface TackHandle {
-  /** Open the feedback dialog. Idempotent. */
+  /** Open the feedback dialog. Idempotent. No-op after destroy(). */
   open: () => void
-  /** Close the dialog without submitting. Idempotent. */
+  /** Close the dialog. Aborts any in-flight submit. Idempotent. */
   close: () => void
-  /** Remove the dialog from the DOM and detach all listeners. */
+  /** Remove the dialog, abort in-flight submit, drop refs. Idempotent. */
   destroy: () => void
 }
 
 interface InternalState {
-  config: Required<Pick<TackWidgetConfig, 'endpoint'>> & TackWidgetConfig
+  config: TackWidgetConfig & { endpoint: string }
   dialog: HTMLDialogElement | null
   textarea: HTMLTextAreaElement | null
   submitBtn: HTMLButtonElement | null
@@ -53,12 +54,20 @@ interface InternalState {
   destroyed: boolean
 }
 
-export function init(config: TackWidgetConfig): TackHandle {
-  if (typeof window === 'undefined') {
-    throw new Error('[tack] init() requires a browser environment')
-  }
+/**
+ * Mount a feedback widget. Returns a handle for open/close/destroy. Each
+ * call returns an independent instance — there is no module-level singleton,
+ * so two widgets on the same page work.
+ *
+ * On the server (no `window`), returns a no-op handle so call sites don't
+ * need to gate on `typeof window`.
+ */
+function init(config: TackWidgetConfig): TackHandle {
   if (!config.projectId || typeof config.projectId !== 'string') {
-    throw new Error('[tack] init() requires a projectId')
+    throw new Error('[tack] Tack.init() requires a projectId')
+  }
+  if (typeof window === 'undefined' || typeof document === 'undefined') {
+    return { open() {}, close() {}, destroy() {} }
   }
 
   const state: InternalState = {
@@ -77,13 +86,14 @@ export function init(config: TackWidgetConfig): TackHandle {
     const dialog = document.createElement('dialog')
     dialog.setAttribute('data-tack-widget', '')
 
+    // Plain form, NOT method="dialog" — we always preventDefault and run
+    // submit asynchronously, so the native dialog-form behaviour is unused.
     const form = document.createElement('form')
-    form.method = 'dialog'
 
     const textarea = document.createElement('textarea')
     textarea.required = true
     textarea.rows = 4
-    textarea.placeholder = 'What’s on your mind?'
+    textarea.placeholder = 'Send feedback'
     textarea.setAttribute('data-tack-input', '')
 
     const actions = document.createElement('div')
@@ -118,19 +128,40 @@ export function init(config: TackWidgetConfig): TackHandle {
   }
 
   async function handleSubmit(): Promise<void> {
-    if (!state.textarea || !state.submitBtn) return
+    if (state.destroyed || !state.textarea || !state.submitBtn) return
     const body = state.textarea.value.trim()
     if (!body) return
 
     state.submitBtn.disabled = true
     state.abort = new AbortController()
+    const abortSignal = state.abort.signal
+
+    const defaults = browserDefaults()
+    const req: TackSubmitRequest = {
+      projectId: state.config.projectId,
+      body,
+      url: defaults.url,
+      userAgent: defaults.userAgent,
+      viewport: defaults.viewport,
+      user: state.config.user,
+      metadata: state.config.metadata,
+    }
 
     try {
-      const result = await postFeedback(state.config, { body }, state.abort.signal)
+      const result = await postFeedback({
+        endpoint: state.config.endpoint,
+        body: req,
+        signal: abortSignal,
+      })
+      // Suppress side effects if the widget was destroyed or the request
+      // was cancelled while in flight — the user is no longer there to see
+      // success UI, and firing onSubmit after destroy is surprising.
+      if (state.destroyed || abortSignal.aborted) return
       state.textarea.value = ''
       close()
       state.config.onSubmit?.(result)
     } catch (err) {
+      if (state.destroyed || abortSignal.aborted) return
       const tackErr =
         err instanceof TackError
           ? err
@@ -138,13 +169,13 @@ export function init(config: TackWidgetConfig): TackHandle {
               {
                 type: 'internal_error',
                 message: err instanceof Error ? err.message : 'Unknown error',
-                doc_url: 'https://tacksdk.com/docs/errors#internal_error',
+                doc_url: docUrl('internal_error'),
               },
               null,
             )
       state.config.onError?.(tackErr)
     } finally {
-      state.submitBtn.disabled = false
+      if (!state.destroyed && state.submitBtn) state.submitBtn.disabled = false
       state.abort = null
     }
   }
@@ -158,6 +189,7 @@ export function init(config: TackWidgetConfig): TackHandle {
 
   function close(): void {
     if (state.destroyed) return
+    state.abort?.abort()
     if (state.dialog?.open) state.dialog.close()
   }
 
@@ -174,88 +206,11 @@ export function init(config: TackWidgetConfig): TackHandle {
   return { open, close, destroy }
 }
 
-async function postFeedback(
-  config: TackWidgetConfig & { endpoint: string },
-  input: { body: string },
-  signal: AbortSignal,
-): Promise<TackFeedbackCreated> {
-  const req: TackSubmitRequest = {
-    projectId: config.projectId,
-    body: input.body,
-    url: typeof window !== 'undefined' ? window.location.href : undefined,
-    userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : undefined,
-    viewport:
-      typeof window !== 'undefined' ? `${window.innerWidth}x${window.innerHeight}` : undefined,
-    user: config.user,
-    metadata: config.metadata,
-  }
-
-  let res: Response
-  try {
-    res = await fetch(`${config.endpoint}/api/v1/feedback`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Idempotency-Key': cryptoRandomId(),
-      },
-      body: JSON.stringify(req),
-      signal,
-    })
-  } catch (err) {
-    throw new TackError(
-      {
-        type: 'network_error',
-        message: err instanceof Error ? err.message : 'Network request failed',
-        doc_url: 'https://tacksdk.com/docs/errors#network_error',
-      },
-      null,
-    )
-  }
-
-  const text = await res.text()
-  const json = text ? safeJson(text) : null
-
-  if (!res.ok) {
-    if (isTackErrorBody(json)) throw new TackError(json.error, res.status)
-    throw new TackError(
-      {
-        type: 'internal_error',
-        message: `Unexpected ${res.status} response`,
-        doc_url: 'https://tacksdk.com/docs/errors#internal_error',
-      },
-      res.status,
-    )
-  }
-
-  if (!json || typeof json !== 'object' || typeof (json as TackFeedbackCreated).id !== 'string') {
-    throw new TackError(
-      {
-        type: 'internal_error',
-        message: 'Malformed success response',
-        doc_url: 'https://tacksdk.com/docs/errors#internal_error',
-      },
-      res.status,
-    )
-  }
-
-  return json as TackFeedbackCreated
-}
-
-function safeJson(text: string): unknown {
-  try {
-    return JSON.parse(text)
-  } catch {
-    return null
-  }
-}
-
-function cryptoRandomId(): string {
-  const g =
-    typeof globalThis !== 'undefined' && 'crypto' in globalThis
-      ? (globalThis as { crypto?: Crypto }).crypto
-      : undefined
-  if (g && typeof g.randomUUID === 'function') return g.randomUUID()
-  return `idm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`
-}
-
-export const Tack = { init }
+/**
+ * Public widget API. Use `Tack.init({ projectId })` to mount a widget; the
+ * returned handle controls open/close/destroy.
+ *
+ * `Tack.version` is the build-time SDK version, also sent as the
+ * `X-Tack-SDK-Version` header on every submit.
+ */
+export const Tack = { init, version: SDK_VERSION }

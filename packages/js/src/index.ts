@@ -1,14 +1,15 @@
-import { TackError, isTackErrorBody } from './errors'
 import type {
   TackFeedbackCreated,
   TackSubmitRequest,
   TackUser,
 } from './types'
+import { DEFAULT_ENDPOINT, SDK_VERSION, browserDefaults, postFeedback } from './transport'
 
 export * from './types'
-export { TackError } from './errors'
-export { Tack, init as initWidget } from './widget'
+export { TackError, docUrl } from './errors'
+export { Tack } from './widget'
 export type { TackWidgetConfig, TackHandle } from './widget'
+export { SDK_VERSION } from './transport'
 
 export interface TackConfig {
   /** Public project id from the Tack dashboard, e.g. "proj_..." */
@@ -23,12 +24,6 @@ export interface TackConfig {
   silent?: boolean
 }
 
-const DEFAULT_ENDPOINT = 'https://tacksdk.com'
-// Updated by tsup define at build time. Falls back to the source default so
-// type-check and dev-mode imports from src/ keep working.
-declare const __TACK_VERSION__: string | undefined
-const SDK_VERSION = typeof __TACK_VERSION__ === 'string' ? __TACK_VERSION__ : '0.0.0-dev'
-
 let _config: TackConfig | null = null
 let _warned = false
 
@@ -36,15 +31,12 @@ export function init(config: TackConfig): void {
   if (!config.projectId || typeof config.projectId !== 'string') {
     throw new Error('[tack] init() requires a projectId')
   }
-  // Spread config first, THEN apply the endpoint fallback. If we did the
-  // reverse, a caller passing `endpoint: undefined` (common from React
-  // wrappers that forward optional props) would overwrite the default with
-  // undefined, and submit() would fetch `undefined/api/v1/feedback`.
+  // Spread first, THEN apply the endpoint fallback. Reversed order means a
+  // caller passing `endpoint: undefined` (common from React wrappers that
+  // forward optional props) overwrites the default with undefined.
   _config = { ...config, endpoint: config.endpoint ?? DEFAULT_ENDPOINT }
   if (!config.silent && !_warned && typeof console !== 'undefined') {
     _warned = true
-    // Intentional: "no semver" without this warning is undocumented breakage.
-    // Pass silent: true once you've read STABILITY.md and pinned a version.
     console.warn(
       `[tack] Running SDK v${SDK_VERSION} (pre-1.0). Pin the version and read ` +
         'STABILITY.md before upgrading: ' +
@@ -77,86 +69,22 @@ export async function submit(input: SubmitInput): Promise<TackFeedbackCreated> {
     throw new Error('[tack] submit() requires a non-empty body')
   }
 
+  const defaults = browserDefaults()
   const req: TackSubmitRequest = {
     projectId: _config.projectId,
     body: input.body,
     rating: input.rating,
     screenshot: input.screenshot,
-    url: input.url ?? (typeof window !== 'undefined' ? window.location.href : undefined),
-    userAgent:
-      input.userAgent ?? (typeof navigator !== 'undefined' ? navigator.userAgent : undefined),
-    viewport:
-      input.viewport ??
-      (typeof window !== 'undefined' ? `${window.innerWidth}x${window.innerHeight}` : undefined),
+    url: input.url ?? defaults.url,
+    userAgent: input.userAgent ?? defaults.userAgent,
+    viewport: input.viewport ?? defaults.viewport,
     user: input.user ?? _config.user,
     metadata: input.metadata ?? _config.metadata,
   }
 
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'Idempotency-Key': input.idempotencyKey ?? cryptoRandomId(),
-  }
-
-  let res: Response
-  try {
-    res = await fetch(`${_config.endpoint}/api/v1/feedback`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(req),
-    })
-  } catch (err) {
-    throw new TackError(
-      {
-        type: 'network_error',
-        message: err instanceof Error ? err.message : 'Network request failed',
-        doc_url: 'https://tacksdk.com/docs/errors#network_error',
-      },
-      null,
-    )
-  }
-
-  const text = await res.text()
-  const json = text ? safeJson(text) : null
-
-  if (!res.ok) {
-    if (isTackErrorBody(json)) throw new TackError(json.error, res.status)
-    throw new TackError(
-      {
-        type: 'internal_error',
-        message: `Unexpected ${res.status} response`,
-        doc_url: 'https://tacksdk.com/docs/errors#internal_error',
-      },
-      res.status,
-    )
-  }
-
-  if (!json || typeof json !== 'object' || typeof (json as TackFeedbackCreated).id !== 'string') {
-    throw new TackError(
-      {
-        type: 'internal_error',
-        message: 'Malformed success response',
-        doc_url: 'https://tacksdk.com/docs/errors#internal_error',
-      },
-      res.status,
-    )
-  }
-
-  return json as TackFeedbackCreated
-}
-
-function safeJson(text: string): unknown {
-  try {
-    return JSON.parse(text)
-  } catch {
-    return null
-  }
-}
-
-function cryptoRandomId(): string {
-  const g =
-    typeof globalThis !== 'undefined' && 'crypto' in globalThis
-      ? (globalThis as { crypto?: Crypto }).crypto
-      : undefined
-  if (g && typeof g.randomUUID === 'function') return g.randomUUID()
-  return `idm_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 12)}`
+  return postFeedback({
+    endpoint: _config.endpoint!,
+    body: req,
+    idempotencyKey: input.idempotencyKey,
+  })
 }
