@@ -14,6 +14,14 @@ export class TackError extends Error {
   }
 }
 
+/**
+ * Canonical doc URL for a given error type. Single source of truth so a
+ * domain rename only edits one place.
+ */
+export function docUrl(type: TackErrorType): string {
+  return `https://tacksdk.com/docs/errors#${type}`
+}
+
 export function isTackErrorBody(v: unknown): v is TackErrorBody {
   if (!v || typeof v !== 'object') return false
   const err = (v as { error?: unknown }).error
