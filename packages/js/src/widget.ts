@@ -63,6 +63,10 @@ export interface TackWidgetConfig {
   onSubmit?: (result: TackFeedbackCreated) => void
   /** Called on submit failure. The dialog stays open. */
   onError?: (err: TackError) => void
+  /** Called whenever the dialog opens (open() invocation that actually shows). */
+  onOpen?: () => void
+  /** Called whenever the dialog closes (cancel, ESC, programmatic close, post-submit). */
+  onClose?: () => void
 }
 
 export interface TackHandle {
@@ -84,7 +88,7 @@ export interface TackHandle {
     partial: Partial<
       Pick<
         TackWidgetConfig,
-        'user' | 'metadata' | 'onSubmit' | 'onError'
+        'user' | 'metadata' | 'onSubmit' | 'onError' | 'onOpen' | 'onClose'
       >
     >,
   ) => void
@@ -132,8 +136,11 @@ function init(config: TackWidgetConfig): TackHandle {
     const container = state.config.container ?? document.body
     const dialog = document.createElement('dialog')
     dialog.setAttribute('data-tack-widget', '')
-    if (state.config.theme && state.config.theme !== 'auto') {
-      dialog.setAttribute('data-tack-theme', state.config.theme)
+    // Default theme is "dark" per DESIGN.md. Pass theme="auto" to follow
+    // prefers-color-scheme, or "light" to force light.
+    const resolvedTheme = state.config.theme ?? 'dark'
+    if (resolvedTheme !== 'auto') {
+      dialog.setAttribute('data-tack-theme', resolvedTheme)
     }
 
     // Plain form, NOT method="dialog" — we always preventDefault and run
@@ -179,6 +186,9 @@ function init(config: TackWidgetConfig): TackHandle {
     form.addEventListener('submit', (event) => {
       event.preventDefault()
       void handleSubmit()
+    })
+    dialog.addEventListener('close', () => {
+      if (!state.destroyed) state.config.onClose?.()
     })
 
     return dialog
@@ -240,7 +250,10 @@ function init(config: TackWidgetConfig): TackHandle {
   function open(): void {
     if (state.destroyed) return
     const dialog = ensureMounted()
-    if (!dialog.open) dialog.showModal()
+    if (!dialog.open) {
+      dialog.showModal()
+      state.config.onOpen?.()
+    }
     state.textarea?.focus()
   }
 
@@ -262,7 +275,7 @@ function init(config: TackWidgetConfig): TackHandle {
 
   function update(
     partial: Partial<
-      Pick<TackWidgetConfig, 'user' | 'metadata' | 'onSubmit' | 'onError'>
+      Pick<TackWidgetConfig, 'user' | 'metadata' | 'onSubmit' | 'onError' | 'onOpen' | 'onClose'>
     >,
   ): void {
     if (state.destroyed) return
@@ -273,6 +286,8 @@ function init(config: TackWidgetConfig): TackHandle {
     if ('metadata' in partial) state.config.metadata = partial.metadata
     if ('onSubmit' in partial) state.config.onSubmit = partial.onSubmit
     if ('onError' in partial) state.config.onError = partial.onError
+    if ('onOpen' in partial) state.config.onOpen = partial.onOpen
+    if ('onClose' in partial) state.config.onClose = partial.onClose
   }
 
   return { open, close, destroy, update }
@@ -303,18 +318,18 @@ function ensureStylesInjected(): void {
 
 const TACK_DEFAULT_CSS = `
 [data-tack-widget] {
-  --tack-bg: #ffffff;
-  --tack-fg: #0f172a;
-  --tack-muted: #64748b;
-  --tack-border: #e2e8f0;
-  --tack-accent: #2563eb;
-  --tack-accent-fg: #ffffff;
-  --tack-radius: 12px;
-  --tack-shadow: 0 20px 60px rgba(15, 23, 42, 0.18);
+  --tack-bg: oklch(1 0 0);
+  --tack-fg: oklch(0.22 0.01 100);
+  --tack-muted: oklch(0.5 0.01 100);
+  --tack-border: oklch(0.9 0.005 100);
+  --tack-accent: oklch(0.62 0.19 145);
+  --tack-accent-fg: oklch(0.99 0 0);
+  --tack-radius: 14px;
+  --tack-shadow: 0 24px 64px oklch(0 0 0 / 0.18), 0 4px 12px oklch(0 0 0 / 0.08);
   --tack-z-index: 2147483600;
   --tack-font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI",
     Roboto, "Helvetica Neue", Arial, sans-serif;
-  border: 0;
+  border: 1px solid var(--tack-border);
   padding: 0;
   border-radius: var(--tack-radius);
   background: var(--tack-bg);
@@ -325,7 +340,8 @@ const TACK_DEFAULT_CSS = `
   width: 100%;
 }
 [data-tack-widget]::backdrop {
-  background: rgba(15, 23, 42, 0.45);
+  background: oklch(0 0 0 / 0.4);
+  backdrop-filter: blur(4px);
 }
 [data-tack-widget] form {
   display: flex;
@@ -344,7 +360,7 @@ const TACK_DEFAULT_CSS = `
   color: inherit;
   background: var(--tack-bg);
   border: 1px solid var(--tack-border);
-  border-radius: 8px;
+  border-radius: 6px;
   padding: 10px 12px;
   resize: vertical;
   min-height: 96px;
@@ -352,7 +368,7 @@ const TACK_DEFAULT_CSS = `
   box-sizing: border-box;
 }
 [data-tack-widget] [data-tack-input]:focus-visible {
-  outline: 2px solid var(--tack-accent);
+  outline: 2px solid color-mix(in oklch, var(--tack-accent) 35%, transparent);
   outline-offset: 1px;
   border-color: var(--tack-accent);
 }
@@ -363,14 +379,16 @@ const TACK_DEFAULT_CSS = `
 }
 [data-tack-widget] button {
   font: inherit;
+  font-weight: 500;
   cursor: pointer;
-  border-radius: 8px;
+  border-radius: 6px;
   padding: 8px 14px;
+  min-height: 36px;
   border: 1px solid transparent;
-  transition: background 120ms ease, border-color 120ms ease;
+  transition: background 150ms ease-out, border-color 150ms ease-out, transform 150ms ease-out;
 }
 [data-tack-widget] button:focus-visible {
-  outline: 2px solid var(--tack-accent);
+  outline: 3px solid color-mix(in oklch, var(--tack-accent) 35%, transparent);
   outline-offset: 2px;
 }
 [data-tack-widget] [data-tack-cancel] {
@@ -394,16 +412,24 @@ const TACK_DEFAULT_CSS = `
   opacity: 0.6;
   cursor: not-allowed;
 }
-[data-tack-widget][data-tack-theme="dark"],
+[data-tack-widget][data-tack-theme="dark"] {
+  --tack-bg: oklch(0.2 0.005 100);
+  --tack-fg: oklch(0.96 0.005 100);
+  --tack-muted: oklch(0.7 0.005 100);
+  --tack-border: oklch(0.28 0.005 100);
+  --tack-accent: oklch(0.7 0.18 145);
+  --tack-accent-fg: oklch(0.16 0.005 100);
+  --tack-shadow: 0 24px 64px oklch(0 0 0 / 0.4), 0 4px 12px oklch(0 0 0 / 0.18);
+}
 @media (prefers-color-scheme: dark) {
   [data-tack-widget]:not([data-tack-theme="light"]) {
-    --tack-bg: #0f172a;
-    --tack-fg: #f8fafc;
-    --tack-muted: #94a3b8;
-    --tack-border: #1e293b;
-    --tack-accent: #60a5fa;
-    --tack-accent-fg: #0f172a;
-    --tack-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+    --tack-bg: oklch(0.2 0.005 100);
+    --tack-fg: oklch(0.96 0.005 100);
+    --tack-muted: oklch(0.7 0.005 100);
+    --tack-border: oklch(0.28 0.005 100);
+    --tack-accent: oklch(0.7 0.18 145);
+    --tack-accent-fg: oklch(0.16 0.005 100);
+    --tack-shadow: 0 24px 64px oklch(0 0 0 / 0.4), 0 4px 12px oklch(0 0 0 / 0.18);
   }
 }
 `

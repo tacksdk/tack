@@ -1,9 +1,23 @@
 export { TackWidget, useTack } from './TackWidget'
 export type { TackWidgetProps } from './TackWidget'
-export { Tack, init, submit, reset, getConfig, TackError } from '@tacksdk/js'
+export { TackLauncher } from './TackLauncher'
+export type { TackLauncherProps } from './TackLauncher'
+export {
+  Tack,
+  TackLauncher as TackLauncherCore,
+  init,
+  submit,
+  reset,
+  getConfig,
+  TackError,
+} from '@tacksdk/js'
 export type {
   TackConfig,
   TackHandle,
+  TackLauncherConfig,
+  TackLauncherHandle,
+  TackLauncherPosition,
+  TackLauncherVariant,
   TackUser,
   TackSubmitRequest,
   TackFeedbackCreated,

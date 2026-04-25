@@ -266,8 +266,16 @@ describe('Tack widget', () => {
       handle.destroy()
     })
 
-    it('theme: "auto" (default) leaves data-tack-theme unset (CSS handles via media query)', () => {
+    it('default theme is "dark" per DESIGN.md (sets data-tack-theme="dark")', () => {
       const handle = Tack.init({ projectId: 'proj_test' })
+      handle.open()
+      const dialog = document.querySelector('dialog[data-tack-widget]')!
+      expect(dialog.getAttribute('data-tack-theme')).toBe('dark')
+      handle.destroy()
+    })
+
+    it('theme: "auto" leaves data-tack-theme unset (CSS handles via media query)', () => {
+      const handle = Tack.init({ projectId: 'proj_test', theme: 'auto' })
       handle.open()
       const dialog = document.querySelector('dialog[data-tack-widget]')!
       expect(dialog.hasAttribute('data-tack-theme')).toBe(false)

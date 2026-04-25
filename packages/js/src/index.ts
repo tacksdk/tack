@@ -9,6 +9,13 @@ export * from './types'
 export { TackError, docUrl } from './errors'
 export { Tack } from './widget'
 export type { TackWidgetConfig, TackHandle } from './widget'
+export { TackLauncher } from './launcher'
+export type {
+  TackLauncherConfig,
+  TackLauncherHandle,
+  TackLauncherPosition,
+  TackLauncherVariant,
+} from './launcher'
 export { SDK_VERSION } from './transport'
 
 export interface TackConfig {
