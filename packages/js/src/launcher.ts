@@ -15,6 +15,12 @@ export type TackLauncherPosition =
 
 export type TackLauncherVariant = 'circle' | 'pill'
 
+/**
+ * Launcher configuration. Inherits everything from `TackWidgetConfig` except
+ * `onOpen` / `onClose` — the launcher owns those internally to keep
+ * `aria-expanded` and visibility in sync with the dialog. Listen for submit
+ * results via `onSubmit` / `onError` instead.
+ */
 export interface TackLauncherConfig
   extends Omit<TackWidgetConfig, 'onOpen' | 'onClose'> {
   /** Viewport corner. Default: "bottom-right". */
