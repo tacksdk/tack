@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Tack, TackError } from '@tacksdk/js'
 import type { TackHandle, TackUser } from '@tacksdk/js'
 
@@ -39,10 +39,17 @@ export interface TackWidgetProps {
  * submit. The component itself holds nothing more than the `TackHandle`.
  *
  * Re-mounts the dialog only when the immutable-after-init props change
- * (`projectId`, `endpoint`, `theme`, `injectStyles`, copy strings). For
- * mutable props (`user`, `metadata`, callbacks) it patches the live handle,
- * so unmemoised callbacks or inline metadata objects no longer destroy the
- * widget on every render.
+ * (`projectId`, `endpoint`, `theme`, `injectStyles`, copy strings).
+ *
+ * - `user` and `metadata` are patched on the live handle via
+ *   `handle.update()` when they change — no re-mount.
+ * - `onSubmit` and `onError` are read through a ref at submit time, so
+ *   identity-changing callbacks (the common React pattern) never re-init
+ *   the widget at all.
+ *
+ * No `useLayoutEffect` (SSR-unfriendly) and no `eslint-disable
+ * react-hooks/exhaustive-deps` — every effect's dep array honestly
+ * matches what the body reads. Mutable values flow through refs.
  */
 export function TackWidget({
   projectId,
@@ -61,13 +68,15 @@ export function TackWidget({
   onError,
 }: TackWidgetProps) {
   const handleRef = useRef<TackHandle | null>(null)
+  // Mutable props live in a ref so the init effect reads the freshest
+  // value at call time without listing them in its dep array. The init
+  // body only references stable refs and the listed primitive deps.
+  const mutableRef = useRef({ user, metadata, onSubmit, onError })
+  mutableRef.current = { user, metadata, onSubmit, onError }
   const [ready, setReady] = useState(false)
 
-  // Mount the dialog once per stable-config change. Copy props are bundled
-  // here because they're written into the DOM at mount time and the vanilla
-  // core has no DOM-update path for them yet.
   useEffect(() => {
-    handleRef.current = Tack.init({
+    const handle = Tack.init({
       projectId,
       endpoint,
       theme,
@@ -76,30 +85,26 @@ export function TackWidget({
       submitLabel,
       cancelLabel,
       placeholder,
-      user,
-      metadata,
-      onSubmit: () => onSubmit?.(),
-      onError: (err) => onError?.(err),
+      user: mutableRef.current.user,
+      metadata: mutableRef.current.metadata,
+      onSubmit: () => mutableRef.current.onSubmit?.(),
+      onError: (err) => mutableRef.current.onError?.(err),
     })
+    handleRef.current = handle
     setReady(true)
     return () => {
-      handleRef.current?.destroy()
+      handle.destroy()
       handleRef.current = null
       setReady(false)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, endpoint, theme, injectStyles, title, submitLabel, cancelLabel, placeholder])
 
-  // Patch mutable fields on every render. useLayoutEffect so the patch
-  // lands before any user interaction in the same tick.
-  useLayoutEffect(() => {
-    handleRef.current?.update({
-      user,
-      metadata,
-      onSubmit: onSubmit ? () => onSubmit() : undefined,
-      onError: onError ? (err) => onError(err) : undefined,
-    })
-  }, [user, metadata, onSubmit, onError])
+  // Patch user/metadata on the live handle when they change. Plain
+  // useEffect (not useLayoutEffect) because update() only writes in-memory
+  // state — useLayoutEffect would warn under SSR with no benefit.
+  useEffect(() => {
+    handleRef.current?.update({ user, metadata })
+  }, [user, metadata])
 
   return (
     <button
@@ -118,35 +123,56 @@ export function TackWidget({
  * Render-nothing hook for hosts that already have their own trigger UI.
  * Returns the live handle; null until first effect runs.
  *
- * Re-mount semantics mirror `<TackWidget>`: only `projectId` and `endpoint`
- * trigger a re-init. Other config fields are patched via `handle.update()`
- * on each render. Callers don't need to memoise inline objects/callbacks.
+ * Re-mount semantics mirror `<TackWidget>`: only the immutable-after-init
+ * fields trigger a re-init. `user`/`metadata` patch via `handle.update()`.
+ * Callbacks are read through a ref so identity changes never reinit.
  */
 export function useTack(config: Parameters<typeof Tack.init>[0]): TackHandle | null {
+  const {
+    projectId,
+    endpoint,
+    theme,
+    injectStyles,
+    title,
+    submitLabel,
+    cancelLabel,
+    placeholder,
+    user,
+    metadata,
+    onSubmit,
+    onError,
+  } = config
   const handleRef = useRef<TackHandle | null>(null)
-  const configRef = useRef(config)
+  const mutableRef = useRef({ user, metadata, onSubmit, onError })
+  mutableRef.current = { user, metadata, onSubmit, onError }
   const [, force] = useState(0)
 
-  // Track latest config without re-running the mount effect.
-  configRef.current = config
-
   useEffect(() => {
-    handleRef.current = Tack.init(configRef.current)
+    const handle = Tack.init({
+      projectId,
+      endpoint,
+      theme,
+      injectStyles,
+      title,
+      submitLabel,
+      cancelLabel,
+      placeholder,
+      user: mutableRef.current.user,
+      metadata: mutableRef.current.metadata,
+      onSubmit: (result) => mutableRef.current.onSubmit?.(result),
+      onError: (err) => mutableRef.current.onError?.(err),
+    })
+    handleRef.current = handle
     force((n) => n + 1)
     return () => {
-      handleRef.current?.destroy()
+      handle.destroy()
       handleRef.current = null
     }
-  }, [config.projectId, config.endpoint])
+  }, [projectId, endpoint, theme, injectStyles, title, submitLabel, cancelLabel, placeholder])
 
-  useLayoutEffect(() => {
-    handleRef.current?.update({
-      user: config.user,
-      metadata: config.metadata,
-      onSubmit: config.onSubmit,
-      onError: config.onError,
-    })
-  }, [config.user, config.metadata, config.onSubmit, config.onError])
+  useEffect(() => {
+    handleRef.current?.update({ user, metadata })
+  }, [user, metadata])
 
   return handleRef.current
 }
