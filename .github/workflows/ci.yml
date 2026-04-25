@@ -22,8 +22,10 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # Build first so downstream packages (e.g. @tacksdk/react) can resolve
+      # `@tacksdk/js` types from dist/ during lint.
+      - run: pnpm -r build
+
       - run: pnpm -r lint
 
       - run: pnpm -r test
-
-      - run: pnpm -r build
