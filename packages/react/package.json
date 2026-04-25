@@ -14,7 +14,9 @@
       "types": "./dist/index.d.ts"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "publishConfig": {
     "access": "public",
     "provenance": true
@@ -26,7 +28,12 @@
   },
   "homepage": "https://github.com/tacksdk/tack/tree/main/packages/react#readme",
   "bugs": "https://github.com/tacksdk/tack/issues",
-  "keywords": ["feedback", "widget", "tack", "react"],
+  "keywords": [
+    "feedback",
+    "widget",
+    "tack",
+    "react"
+  ],
   "sideEffects": false,
   "scripts": {
     "build": "tsup",
@@ -42,8 +49,10 @@
     "@tacksdk/js": "workspace:*"
   },
   "devDependencies": {
+    "@testing-library/react": "^16.3.2",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
+    "jsdom": "29.0.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tsup": "^8.0.2",
