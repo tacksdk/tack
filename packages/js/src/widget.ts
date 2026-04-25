@@ -33,12 +33,22 @@ export interface TackWidgetConfig {
   /**
    * Color scheme. "auto" (default) follows `prefers-color-scheme`. "light"
    * and "dark" force the corresponding palette regardless of the OS setting.
+   *
+   * Only meaningful when the default stylesheet is injected (i.e. when
+   * `injectStyles !== false`). When you provide your own CSS, theme has no
+   * effect on appearance — it just sets the `data-tack-theme` attribute on
+   * the dialog so your selectors can branch.
    */
   theme?: 'auto' | 'light' | 'dark'
   /**
    * Skip injecting the default stylesheet. Use when the host wants to fully
    * own the look — target `[data-tack-widget]`, `[data-tack-input]`,
-   * `[data-tack-submit]`, `[data-tack-cancel]` from your own CSS.
+   * `[data-tack-submit]`, `[data-tack-cancel]`, `[data-tack-title]`,
+   * `[data-tack-actions]` from your own CSS.
+   *
+   * The default sheet sets `--tack-z-index: 2147483600` so the dialog wins
+   * against most third-party widgets (Intercom, Crisp, etc.). Override by
+   * setting that custom property in your own CSS.
    */
   injectStyles?: boolean
   /** Title shown at the top of the dialog. Default: "Send feedback". */
@@ -62,6 +72,22 @@ export interface TackHandle {
   close: () => void
   /** Remove the dialog, abort in-flight submit, drop refs. Idempotent. */
   destroy: () => void
+  /**
+   * Update mutable config fields without re-mounting the dialog. Use for
+   * data that may legitimately change on re-renders (current user, page
+   * metadata, latest callback identity). Does NOT support changing
+   * `projectId`, `endpoint`, `theme`, `injectStyles`, `container`, or copy
+   * (`title`, `submitLabel`, etc.) — those would require a re-mount;
+   * destroy() and init() instead.
+   */
+  update: (
+    partial: Partial<
+      Pick<
+        TackWidgetConfig,
+        'user' | 'metadata' | 'onSubmit' | 'onError'
+      >
+    >,
+  ) => void
 }
 
 interface InternalState {
@@ -86,7 +112,7 @@ function init(config: TackWidgetConfig): TackHandle {
     throw new Error('[tack] Tack.init() requires a projectId')
   }
   if (typeof window === 'undefined' || typeof document === 'undefined') {
-    return { open() {}, close() {}, destroy() {} }
+    return { open() {}, close() {}, destroy() {}, update() {} }
   }
 
   const state: InternalState = {
@@ -117,7 +143,7 @@ function init(config: TackWidgetConfig): TackHandle {
     const titleEl = document.createElement('h2')
     titleEl.textContent = state.config.title ?? 'Send feedback'
     titleEl.setAttribute('data-tack-title', '')
-    titleEl.id = `tack-title-${Math.random().toString(36).slice(2, 8)}`
+    titleEl.id = `tack-title-${nextDialogId()}`
     dialog.setAttribute('aria-labelledby', titleEl.id)
 
     const textarea = document.createElement('textarea')
@@ -234,7 +260,30 @@ function init(config: TackWidgetConfig): TackHandle {
     state.submitBtn = null
   }
 
-  return { open, close, destroy }
+  function update(
+    partial: Partial<
+      Pick<TackWidgetConfig, 'user' | 'metadata' | 'onSubmit' | 'onError'>
+    >,
+  ): void {
+    if (state.destroyed) return
+    // Only writes the fields that are actually present so callers can patch
+    // selectively; `undefined` here means "intentionally clear" since we
+    // checked key presence with `in`.
+    if ('user' in partial) state.config.user = partial.user
+    if ('metadata' in partial) state.config.metadata = partial.metadata
+    if ('onSubmit' in partial) state.config.onSubmit = partial.onSubmit
+    if ('onError' in partial) state.config.onError = partial.onError
+  }
+
+  return { open, close, destroy, update }
+}
+
+// Monotonic counter for unique element ids — collision-free across the
+// page lifetime, deterministic for snapshot tests.
+let _dialogIdCounter = 0
+function nextDialogId(): number {
+  _dialogIdCounter += 1
+  return _dialogIdCounter
 }
 
 /**
