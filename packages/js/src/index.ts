@@ -7,6 +7,8 @@ import type {
 
 export * from './types'
 export { TackError } from './errors'
+export { Tack, init as initWidget } from './widget'
+export type { TackWidgetConfig, TackHandle } from './widget'
 
 export interface TackConfig {
   /** Public project id from the Tack dashboard, e.g. "proj_..." */
