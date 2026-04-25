@@ -1,103 +1,126 @@
 import { useEffect, useRef, useState } from 'react'
-import { init, reset, submit, TackError } from '@tacksdk/js'
-import type { TackUser } from '@tacksdk/js'
+import { Tack, TackError } from '@tacksdk/js'
+import type { TackHandle, TackUser } from '@tacksdk/js'
 
 export interface TackWidgetProps {
   /** Public project id from the Tack dashboard ("proj_...") */
   projectId: string
   /** Override the API endpoint */
   endpoint?: string
-  /** Button label on the trigger */
+  /** Trigger button label */
   label?: string
+  /** Color scheme. "auto" follows prefers-color-scheme. */
+  theme?: 'auto' | 'light' | 'dark'
+  /** Skip injecting the SDK's default stylesheet — host owns the look. */
+  injectStyles?: boolean
+  /** Dialog title */
+  title?: string
+  /** Submit button label inside the dialog */
+  submitLabel?: string
+  /** Cancel button label inside the dialog */
+  cancelLabel?: string
+  /** Textarea placeholder */
+  placeholder?: string
   /** Optional user attached to submissions */
   user?: TackUser
   /** Extra metadata attached to submissions */
   metadata?: Record<string, unknown>
+  /** className applied to the trigger button */
+  className?: string
   /** Called after a successful submission */
   onSubmit?: () => void
   /** Called on submission error */
-  onError?: (err: TackError | Error) => void
+  onError?: (err: TackError) => void
 }
 
-type State = 'idle' | 'open' | 'submitting' | 'success' | 'error'
-
+/**
+ * React wrapper around the vanilla `Tack` widget. Renders a trigger button
+ * and lets the vanilla core own the dialog DOM, theming, lifecycle, and
+ * submit. The component itself holds nothing more than the `TackHandle`.
+ */
 export function TackWidget({
   projectId,
   endpoint,
   label = 'Feedback',
+  theme,
+  injectStyles,
+  title,
+  submitLabel,
+  cancelLabel,
+  placeholder,
   user,
   metadata,
+  className,
   onSubmit,
   onError,
 }: TackWidgetProps) {
-  const [state, setState] = useState<State>('idle')
-  const [message, setMessage] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const initialized = useRef(false)
+  const handleRef = useRef<TackHandle | null>(null)
+  const [ready, setReady] = useState(false)
 
   useEffect(() => {
-    init({ projectId, endpoint, user, metadata })
-    initialized.current = true
+    handleRef.current = Tack.init({
+      projectId,
+      endpoint,
+      theme,
+      injectStyles,
+      title,
+      submitLabel,
+      cancelLabel,
+      placeholder,
+      user,
+      metadata,
+      onSubmit: () => onSubmit?.(),
+      onError: (err) => onError?.(err),
+    })
+    setReady(true)
     return () => {
-      reset()
-      initialized.current = false
+      handleRef.current?.destroy()
+      handleRef.current = null
+      setReady(false)
     }
-  }, [projectId, endpoint, user, metadata])
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (!message.trim()) return
-    setState('submitting')
-    setError(null)
-    try {
-      await submit({ body: message })
-      setState('success')
-      setMessage('')
-      onSubmit?.()
-    } catch (err) {
-      const e = err instanceof Error ? err : new Error(String(err))
-      setError(e.message)
-      setState('error')
-      onError?.(e as TackError | Error)
-    }
-  }
-
-  if (state === 'idle') {
-    return (
-      <button onClick={() => setState('open')} data-tack-trigger>
-        {label}
-      </button>
-    )
-  }
-
-  if (state === 'success') {
-    return (
-      <div data-tack-success>
-        <p>Thanks for your feedback!</p>
-        <button onClick={() => setState('idle')}>Close</button>
-      </div>
-    )
-  }
+  }, [
+    projectId,
+    endpoint,
+    theme,
+    injectStyles,
+    title,
+    submitLabel,
+    cancelLabel,
+    placeholder,
+    user,
+    metadata,
+    onSubmit,
+    onError,
+  ])
 
   return (
-    <form onSubmit={handleSubmit} data-tack-form>
-      <textarea
-        value={message}
-        onChange={(e) => setMessage(e.target.value)}
-        placeholder="What's on your mind?"
-        rows={4}
-        disabled={state === 'submitting'}
-        required
-      />
-      {state === 'error' && <p data-tack-error>{error}</p>}
-      <div>
-        <button type="button" onClick={() => setState('idle')} disabled={state === 'submitting'}>
-          Cancel
-        </button>
-        <button type="submit" disabled={state === 'submitting' || !message.trim()}>
-          {state === 'submitting' ? 'Sending…' : 'Send'}
-        </button>
-      </div>
-    </form>
+    <button
+      type="button"
+      data-tack-trigger
+      className={className}
+      onClick={() => handleRef.current?.open()}
+      disabled={!ready}
+    >
+      {label}
+    </button>
   )
+}
+
+/**
+ * Render-nothing hook for hosts that already have their own trigger UI.
+ * Returns the live handle; null until first effect runs.
+ */
+export function useTack(config: Parameters<typeof Tack.init>[0]): TackHandle | null {
+  const ref = useRef<TackHandle | null>(null)
+  const [, force] = useState(0)
+  useEffect(() => {
+    ref.current = Tack.init(config)
+    force((n) => n + 1)
+    return () => {
+      ref.current?.destroy()
+      ref.current = null
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(config)])
+  return ref.current
 }

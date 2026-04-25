@@ -33,6 +33,7 @@ function patchDialog() {
 
 beforeEach(() => {
   document.body.innerHTML = ''
+  document.head.innerHTML = ''
   vi.restoreAllMocks()
   patchDialog()
 })
@@ -232,6 +233,74 @@ describe('Tack widget', () => {
     await new Promise((r) => setTimeout(r, 20))
 
     expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  describe('theming', () => {
+    it('injects the default stylesheet on first open (idempotent)', () => {
+      const a = Tack.init({ projectId: 'proj_a' })
+      const b = Tack.init({ projectId: 'proj_b' })
+      expect(document.querySelectorAll('style[data-tack-styles]')).toHaveLength(0)
+      a.open()
+      b.open()
+      // One global style block, even with two widgets
+      expect(document.querySelectorAll('style[data-tack-styles]')).toHaveLength(1)
+      const css = document.querySelector('style[data-tack-styles]')!.textContent ?? ''
+      expect(css).toContain('--tack-bg')
+      expect(css).toContain('--tack-accent')
+      a.destroy()
+      b.destroy()
+    })
+
+    it('injectStyles: false skips the stylesheet', () => {
+      const handle = Tack.init({ projectId: 'proj_test', injectStyles: false })
+      handle.open()
+      expect(document.querySelector('style[data-tack-styles]')).toBeNull()
+      handle.destroy()
+    })
+
+    it('theme: "dark" sets data-tack-theme on the dialog', () => {
+      const handle = Tack.init({ projectId: 'proj_test', theme: 'dark' })
+      handle.open()
+      const dialog = document.querySelector('dialog[data-tack-widget]')!
+      expect(dialog.getAttribute('data-tack-theme')).toBe('dark')
+      handle.destroy()
+    })
+
+    it('theme: "auto" (default) leaves data-tack-theme unset (CSS handles via media query)', () => {
+      const handle = Tack.init({ projectId: 'proj_test' })
+      handle.open()
+      const dialog = document.querySelector('dialog[data-tack-widget]')!
+      expect(dialog.hasAttribute('data-tack-theme')).toBe(false)
+      handle.destroy()
+    })
+
+    it('respects custom title, labels, and placeholder', () => {
+      const handle = Tack.init({
+        projectId: 'proj_test',
+        title: 'Tell us!',
+        submitLabel: 'Ship it',
+        cancelLabel: 'Nope',
+        placeholder: 'go on...',
+      })
+      handle.open()
+      expect(document.querySelector('[data-tack-title]')!.textContent).toBe('Tell us!')
+      expect(document.querySelector('[data-tack-submit]')!.textContent).toBe('Ship it')
+      expect(document.querySelector('[data-tack-cancel]')!.textContent).toBe('Nope')
+      expect(
+        document.querySelector<HTMLTextAreaElement>('[data-tack-input]')!.placeholder,
+      ).toBe('go on...')
+      handle.destroy()
+    })
+
+    it('dialog has aria-labelledby pointing at the title', () => {
+      const handle = Tack.init({ projectId: 'proj_test' })
+      handle.open()
+      const dialog = document.querySelector('dialog[data-tack-widget]')!
+      const titleId = dialog.getAttribute('aria-labelledby')
+      expect(titleId).toBeTruthy()
+      expect(document.getElementById(titleId!)).not.toBeNull()
+      handle.destroy()
+    })
   })
 
   it('Tack.version is a string', () => {
