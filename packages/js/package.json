@@ -1,6 +1,6 @@
 {
   "name": "@tacksdk/js",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Tack feedback SDK — vanilla JS client",
   "license": "MIT",
   "main": "./dist/index.js",

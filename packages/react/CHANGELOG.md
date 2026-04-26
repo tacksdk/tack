@@ -1,5 +1,18 @@
 # @tacksdk/react
 
+## 0.1.1
+
+### Patch Changes
+
+- [#19](https://github.com/tacksdk/tack/pull/19) [`7a93d44`](https://github.com/tacksdk/tack/commit/7a93d44b4f877c98742e619633ea8c526ea0a728) Thanks [@lucascaro](https://github.com/lucascaro)! - Lock `@tacksdk/js` and `@tacksdk/react` versions in step.
+
+  Adds `"fixed": [["@tacksdk/js", "@tacksdk/react"]]` to `.changeset/config.json` so both packages always ship the same version number, avoiding the drift that left them at `0.1.0` and `0.0.3` after the previous release. From here on, any bump to either package bumps both to the higher resulting version.
+
+  This release realigns them at `0.1.1`. No code changes.
+
+- Updated dependencies [[`7a93d44`](https://github.com/tacksdk/tack/commit/7a93d44b4f877c98742e619633ea8c526ea0a728)]:
+  - @tacksdk/js@0.1.1
+
 ## 0.0.3
 
 ### Patch Changes
