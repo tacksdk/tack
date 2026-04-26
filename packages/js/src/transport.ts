@@ -18,7 +18,20 @@ export interface PostFeedbackOptions {
   body: TackSubmitRequest
   idempotencyKey?: string
   signal?: AbortSignal
+  /**
+   * Request timeout in ms. Defaults to REQUEST_TIMEOUT_MS. Exposed for tests
+   * that want to assert timeout behavior without waiting 30 seconds.
+   */
+  timeoutMs?: number
 }
+
+/**
+ * Hard upper bound on a single submit. Without this, a stalled network
+ * leaves the caller (widget or headless) hanging until the OS-level fetch
+ * timeout (~2-5min) eventually fires. We surface as `network_error` so
+ * callers can branch on `TackError.type` and offer a retry.
+ */
+export const REQUEST_TIMEOUT_MS = 30_000
 
 export async function postFeedback(
   opts: PostFeedbackOptions,
@@ -29,17 +42,63 @@ export async function postFeedback(
     'X-Tack-SDK-Version': SDK_VERSION,
   }
 
+  // Compose the caller's signal with a timeout. Manual coordination instead
+  // of `AbortSignal.any` so we don't depend on a 2024-baseline API. Tracks
+  // `timedOut` separately because a fired AbortSignal surfaces to fetch as
+  // a single "AbortError" regardless of cause — but the catch checks the
+  // user signal FIRST so a user cancel always wins, even in a race where
+  // the timer happens to also fire in the same tick.
+  const controller = new AbortController()
+  let timedOut = false
+  const onUserAbort = () => controller.abort()
+  if (opts.signal) {
+    if (opts.signal.aborted) controller.abort()
+    else opts.signal.addEventListener('abort', onUserAbort, { once: true })
+  }
+  const timeoutMs = opts.timeoutMs ?? REQUEST_TIMEOUT_MS
+  const timeoutId = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, timeoutMs)
+
+  // The timeout MUST cover the body read, not just `fetch()` resolution.
+  // `fetch` resolves once headers arrive; an upstream that sends 200 OK and
+  // then stalls the body would otherwise hang the caller forever. So we
+  // wrap fetch + res.text() in a single try/finally.
   let res: Response
+  let text: string
   try {
     res = await fetch(`${opts.endpoint}/api/v1/feedback`, {
       method: 'POST',
       headers,
       body: JSON.stringify(opts.body),
-      signal: opts.signal,
+      signal: controller.signal,
     })
+    text = await res.text()
   } catch (err) {
-    // AbortError surfaces as DOMException; preserve it so callers can
-    // distinguish a user-initiated cancel from a real network failure.
+    // User-initiated abort takes precedence over timeout. Even if the timer
+    // races and flips `timedOut` true between the user calling abort() and
+    // the rejected fetch reaching this catch, an aborted user signal means
+    // the caller cancelled, so re-throw AbortError (not network_error).
+    if (
+      opts.signal?.aborted &&
+      err instanceof Error &&
+      err.name === 'AbortError'
+    ) {
+      throw err
+    }
+    if (timedOut) {
+      throw new TackError(
+        {
+          type: 'network_error',
+          message: `Request timed out after ${timeoutMs}ms`,
+          doc_url: docUrl('network_error'),
+        },
+        null,
+      )
+    }
+    // Defense in depth: any other AbortError (controller aborted by code we
+    // didn't write — shouldn't happen) bubbles up unchanged.
     if (err instanceof Error && err.name === 'AbortError') throw err
     throw new TackError(
       {
@@ -49,9 +108,11 @@ export async function postFeedback(
       },
       null,
     )
+  } finally {
+    clearTimeout(timeoutId)
+    if (opts.signal) opts.signal.removeEventListener('abort', onUserAbort)
   }
 
-  const text = await res.text()
   const json = text ? safeJson(text) : null
 
   if (!res.ok) {

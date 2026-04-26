@@ -2,7 +2,7 @@ import { defineConfig } from 'tsup'
 import pkg from './package.json'
 
 export default defineConfig({
-  entry: ['src/index.ts'],
+  entry: ['src/index.ts', 'src/headless.ts'],
   format: ['cjs', 'esm'],
   dts: true,
   sourcemap: true,
