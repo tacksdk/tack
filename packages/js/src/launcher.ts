@@ -37,6 +37,16 @@ export interface TackLauncherConfig
   launcherContainer?: HTMLElement
   /** Class added to the launcher button (alongside data-tack-launcher). */
   launcherClassName?: string
+  /**
+   * Render the launcher in normal document flow instead of as a fixed-position
+   * floating button. When true, `position` and `offset` are ignored, and the
+   * button is mounted into `launcherContainer` (default: document.body, but
+   * for inline mode the React wrapper passes its own ref'd element).
+   *
+   * Use case: showing the launcher inside a hero section, a CTA cluster, or
+   * an empty-state, where the floating mode would feel out of place.
+   */
+  inline?: boolean
 }
 
 export interface TackLauncherHandle {
@@ -68,6 +78,7 @@ function mountLauncher(config: TackLauncherConfig): TackLauncherHandle {
     return { open() {}, close() {}, destroy() {}, update() {} }
   }
 
+  const inline = config.inline ?? false
   const position: TackLauncherPosition = config.position ?? 'bottom-right'
   const variant: TackLauncherVariant = config.variant ?? 'circle'
   const label = config.label ?? 'Send feedback'
@@ -80,7 +91,11 @@ function mountLauncher(config: TackLauncherConfig): TackLauncherHandle {
   button.type = 'button'
   button.id = nextLauncherId()
   button.setAttribute('data-tack-launcher', '')
-  button.setAttribute('data-tack-launcher-position', position)
+  if (inline) {
+    button.setAttribute('data-tack-launcher-inline', '')
+  } else {
+    button.setAttribute('data-tack-launcher-position', position)
+  }
   button.setAttribute('data-tack-launcher-variant', variant)
   if (hideOnMobile) button.setAttribute('data-tack-launcher-hide-mobile', '')
   const resolvedTheme = config.theme ?? 'dark'
@@ -210,6 +225,15 @@ const TACK_LAUNCHER_CSS = `
 [data-tack-launcher][data-tack-launcher-position="top-left"] {
   top: max(var(--tack-launcher-offset), env(safe-area-inset-top));
   left: max(var(--tack-launcher-offset), env(safe-area-inset-left));
+}
+/* Inline mode: in normal document flow, no fixed positioning, no offsets. */
+[data-tack-launcher][data-tack-launcher-inline] {
+  position: static;
+  top: auto;
+  right: auto;
+  bottom: auto;
+  left: auto;
+  z-index: auto;
 }
 [data-tack-launcher] [data-tack-launcher-icon] {
   display: inline-flex;

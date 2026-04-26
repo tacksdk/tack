@@ -24,6 +24,13 @@ export interface TackLauncherProps {
   hideOnMobile?: boolean
   /** className applied to the launcher button. */
   className?: string
+  /**
+   * Render the launcher in document flow instead of as a fixed-position
+   * floating button. The React component returns a `<span>` host element;
+   * the launcher button mounts inside it. `position` and `offset` are
+   * ignored when `inline` is true.
+   */
+  inline?: boolean
   /** Color scheme. "auto" follows prefers-color-scheme. */
   theme?: 'auto' | 'light' | 'dark'
   /** Skip injecting the SDK's default stylesheet — host owns the look. */
@@ -61,6 +68,7 @@ export function TackLauncher({
   offset,
   hideOnMobile,
   className,
+  inline,
   theme,
   injectStyles,
   title,
@@ -73,6 +81,7 @@ export function TackLauncher({
   onError,
 }: TackLauncherProps) {
   const handleRef = useRef<TackLauncherHandle | null>(null)
+  const inlineHostRef = useRef<HTMLSpanElement | null>(null)
   const mutableRef = useRef({ user, metadata, onSubmit, onError })
   mutableRef.current = { user, metadata, onSubmit, onError }
 
@@ -85,6 +94,9 @@ export function TackLauncher({
       label,
       offset,
       hideOnMobile,
+      inline,
+      // Inline mode mounts into our ref'd span; fixed mode mounts to body.
+      launcherContainer: inline && inlineHostRef.current ? inlineHostRef.current : undefined,
       launcherClassName: className,
       theme,
       injectStyles,
@@ -111,6 +123,7 @@ export function TackLauncher({
     offset,
     hideOnMobile,
     className,
+    inline,
     theme,
     injectStyles,
     title,
@@ -123,5 +136,7 @@ export function TackLauncher({
     handleRef.current?.update({ user, metadata })
   }, [user, metadata])
 
-  return null
+  // Inline mode needs a host element so the launcher mounts in document flow.
+  // Floating mode renders nothing — the core mounts the button to document.body.
+  return inline ? <span ref={inlineHostRef} data-tack-launcher-host="" /> : null
 }
