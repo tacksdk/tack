@@ -44,8 +44,12 @@ jobs:
       - name: Create Release PR or publish
         uses: changesets/action@v1
         with:
-          publish: pnpm release
-          version: pnpm version
+          # `pnpm version` is a built-in pnpm subcommand (bumps the
+          # root package), not our npm script — must go through
+          # `pnpm run`. Same caution for `release`, kept explicit
+          # for symmetry / future-proofing.
+          publish: pnpm run release
+          version: pnpm run version
           commit: "chore: release packages"
           title: "chore: release packages"
         env:
