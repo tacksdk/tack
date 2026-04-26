@@ -35,6 +35,8 @@ export interface HeadlessSubmitOptions {
   userAgent?: string
   /** Defaults to `${innerWidth}x${innerHeight}` in a browser context. */
   viewport?: string
+  /** Host app version (any format, e.g. "1.4.2" or a git sha). */
+  appVersion?: string
   user?: TackUser
   metadata?: Record<string, unknown>
   /** Custom dedup key. Auto-generated when omitted. */
@@ -62,6 +64,7 @@ export async function submit(
     url: opts.url ?? defaults.url,
     userAgent: opts.userAgent ?? defaults.userAgent,
     viewport: opts.viewport ?? defaults.viewport,
+    appVersion: opts.appVersion,
     user: opts.user,
     metadata: opts.metadata,
   }

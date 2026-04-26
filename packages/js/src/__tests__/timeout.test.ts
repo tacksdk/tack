@@ -41,10 +41,10 @@ describe('postFeedback timeout', () => {
     })
     // Attach the catch handler BEFORE advancing time so the rejection isn't
     // observed by Vitest as "unhandled" between the timer fire and the await.
-    const settled = promise.catch((err: unknown) => err as TackError)
+    const settled = promise.catch((err: unknown) => err)
     await vi.advanceTimersByTimeAsync(60)
     const err = await settled
-    expect(err).toBeInstanceOf(TackError)
+    if (!(err instanceof TackError)) throw new Error(`expected TackError, got ${String(err)}`)
     expect(err.type).toBe('network_error')
     expect(err.message).toMatch(/timed out/i)
   })
@@ -75,6 +75,50 @@ describe('postFeedback timeout', () => {
 
     await expect(promise).rejects.toMatchObject({ name: 'AbortError' })
   })
+
+  it('times out when the BODY hangs (200 OK headers, then stalled stream)', async () => {
+    // Regression for the "timeout only bounds fetch headers" bug: an upstream
+    // that flushes 200 OK then never sends the body would have hung the
+    // caller forever before the fix, because the timeout was cleared right
+    // after fetch() resolved.
+    vi.useFakeTimers()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_url: string, init: RequestInit) => {
+        return {
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          text: () =>
+            new Promise<string>((_resolve, reject) => {
+              init.signal?.addEventListener('abort', () => {
+                const err = new Error('body stream aborted')
+                ;(err as Error).name = 'AbortError'
+                reject(err)
+              })
+            }),
+        } as unknown as Response
+      }),
+    )
+
+    const promise = postFeedback({
+      endpoint: ENDPOINT,
+      body: REQ,
+      timeoutMs: 50,
+    })
+    const settled = promise.catch((err: unknown) => err)
+    await vi.advanceTimersByTimeAsync(60)
+    const err = await settled
+    if (!(err instanceof TackError)) throw new Error(`expected TackError, got ${String(err)}`)
+    expect(err.type).toBe('network_error')
+    expect(err.message).toMatch(/timed out/i)
+  })
+
+  // Note: a tighter test for the "user abort + timeout fire in the same tick"
+  // race lives only in transport.ts code review. JS event loop semantics
+  // (microtasks drain before timers) make the race unreachable in practice,
+  // so the catch's `opts.signal.aborted` precedence check is defense in depth
+  // rather than something we can reliably reproduce in a unit test.
 
   it('clears the timeout on success (no late abort fires)', async () => {
     const fakeOk = {

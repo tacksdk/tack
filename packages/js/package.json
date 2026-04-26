@@ -48,6 +48,7 @@
     "lint": "tsc --noEmit"
   },
   "devDependencies": {
+    "@types/node": "^20.0.0",
     "jsdom": "29.0.2",
     "tsup": "^8.0.2",
     "typescript": "^5.4.5",

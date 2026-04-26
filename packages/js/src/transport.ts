@@ -45,8 +45,9 @@ export async function postFeedback(
   // Compose the caller's signal with a timeout. Manual coordination instead
   // of `AbortSignal.any` so we don't depend on a 2024-baseline API. Tracks
   // `timedOut` separately because a fired AbortSignal surfaces to fetch as
-  // a single "AbortError" regardless of cause — we need to distinguish
-  // user-initiated cancel (re-throw) from timeout (map to network_error).
+  // a single "AbortError" regardless of cause — but the catch checks the
+  // user signal FIRST so a user cancel always wins, even in a race where
+  // the timer happens to also fire in the same tick.
   const controller = new AbortController()
   let timedOut = false
   const onUserAbort = () => controller.abort()
@@ -60,7 +61,12 @@ export async function postFeedback(
     controller.abort()
   }, timeoutMs)
 
+  // The timeout MUST cover the body read, not just `fetch()` resolution.
+  // `fetch` resolves once headers arrive; an upstream that sends 200 OK and
+  // then stalls the body would otherwise hang the caller forever. So we
+  // wrap fetch + res.text() in a single try/finally.
   let res: Response
+  let text: string
   try {
     res = await fetch(`${opts.endpoint}/api/v1/feedback`, {
       method: 'POST',
@@ -68,7 +74,19 @@ export async function postFeedback(
       body: JSON.stringify(opts.body),
       signal: controller.signal,
     })
+    text = await res.text()
   } catch (err) {
+    // User-initiated abort takes precedence over timeout. Even if the timer
+    // races and flips `timedOut` true between the user calling abort() and
+    // the rejected fetch reaching this catch, an aborted user signal means
+    // the caller cancelled, so re-throw AbortError (not network_error).
+    if (
+      opts.signal?.aborted &&
+      err instanceof Error &&
+      err.name === 'AbortError'
+    ) {
+      throw err
+    }
     if (timedOut) {
       throw new TackError(
         {
@@ -79,8 +97,8 @@ export async function postFeedback(
         null,
       )
     }
-    // User-initiated abort surfaces as DOMException; preserve so callers can
-    // distinguish a user-initiated cancel from a real network failure.
+    // Defense in depth: any other AbortError (controller aborted by code we
+    // didn't write — shouldn't happen) bubbles up unchanged.
     if (err instanceof Error && err.name === 'AbortError') throw err
     throw new TackError(
       {
@@ -95,7 +113,6 @@ export async function postFeedback(
     if (opts.signal) opts.signal.removeEventListener('abort', onUserAbort)
   }
 
-  const text = await res.text()
   const json = text ? safeJson(text) : null
 
   if (!res.ok) {
