@@ -31,8 +31,10 @@ jobs:
           cache: pnpm
           registry-url: https://registry.npmjs.org
 
-      # Trusted Publishing (OIDC) requires npm >= 11.5.1
-      - run: npm install -g npm@latest
+      # Trusted Publishing (OIDC) requires npm >= 11.5.1.
+      # --force avoids MODULE_NOT_FOUND when the bundled npm
+      # self-upgrades and pulls modules out from under itself.
+      - run: npm install -g npm@latest --force
 
       - run: pnpm install --frozen-lockfile
 
