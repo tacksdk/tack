@@ -1,5 +1,15 @@
 # @tacksdk/js
 
+## 0.1.1
+
+### Patch Changes
+
+- [#19](https://github.com/tacksdk/tack/pull/19) [`7a93d44`](https://github.com/tacksdk/tack/commit/7a93d44b4f877c98742e619633ea8c526ea0a728) Thanks [@lucascaro](https://github.com/lucascaro)! - Lock `@tacksdk/js` and `@tacksdk/react` versions in step.
+
+  Adds `"fixed": [["@tacksdk/js", "@tacksdk/react"]]` to `.changeset/config.json` so both packages always ship the same version number, avoiding the drift that left them at `0.1.0` and `0.0.3` after the previous release. From here on, any bump to either package bumps both to the higher resulting version.
+
+  This release realigns them at `0.1.1`. No code changes.
+
 ## 0.1.0
 
 ### Minor Changes
@@ -11,13 +21,13 @@
   Pure-function `submit({ projectId, body, ... })` for callers that want to post feedback without mounting the widget. Zero DOM cost — the headless chunk does not import widget or launcher code. ~500 bytes gzipped.
 
   ```ts
-  import { submit } from '@tacksdk/js/headless'
+  import { submit } from "@tacksdk/js/headless";
 
   await submit({
-    projectId: 'proj_abc',
-    body: 'Stale data on dashboard',
-    user: { id: 'usr_123' },
-  })
+    projectId: "proj_abc",
+    body: "Stale data on dashboard",
+    user: { id: "usr_123" },
+  });
   ```
 
   Unlike the legacy module-level `init()` + `submit()` in `@tacksdk/js`, the headless surface takes `projectId` inline on every call. No module state. Two consumers on the same page can submit to different projects without coordination.
