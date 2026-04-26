@@ -4,7 +4,7 @@
 
 ### Minor Changes
 
-- [#16](https://github.com/tacksdk/tack/pull/16) [`a4b2305`](https://github.com/tacksdk/tack/commit/a4b230529f52a2ba3dfce3983ece0be39cc2f59d) Thanks [@{](https://github.com/{)! - Add `@tacksdk/js/headless` subpath export for DOM-free `submit()` calls, and bound every request with a 30s timeout in transport.
+- [#16](https://github.com/tacksdk/tack/pull/16) [`a4b2305`](https://github.com/tacksdk/tack/commit/a4b230529f52a2ba3dfce3983ece0be39cc2f59d) Thanks [@lucascaro](https://github.com/lucascaro)! - Add `@tacksdk/js/headless` subpath export for DOM-free `submit()` calls, and bound every request with a 30s timeout in transport.
 
   **New: `@tacksdk/js/headless`**
 
@@ -16,7 +16,7 @@
   await submit({
     projectId: 'proj_abc',
     body: 'Stale data on dashboard',
-   id: 'usr_123' },
+    user: { id: 'usr_123' },
   })
   ```
 
