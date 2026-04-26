@@ -1,6 +1,6 @@
 {
   "name": "@tacksdk/react",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Tack feedback SDK — React component",
   "license": "MIT",
   "main": "./dist/index.js",
