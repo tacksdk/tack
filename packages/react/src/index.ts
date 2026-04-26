@@ -10,6 +10,9 @@ export {
   reset,
   getConfig,
   TackError,
+  bindHotkey,
+  parseHotkey,
+  matchHotkey,
 } from '@tacksdk/js'
 export type {
   TackConfig,
@@ -24,4 +27,7 @@ export type {
   TackErrorBody,
   TackErrorType,
   SubmitInput,
+  ParsedHotkey,
+  ParseHotkeyOptions,
+  BindHotkeyOptions,
 } from '@tacksdk/js'

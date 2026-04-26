@@ -47,6 +47,9 @@ export interface TackLauncherProps {
   user?: TackUser
   /** Extra metadata attached to submissions. */
   metadata?: Record<string, unknown>
+  /** Optional global keyboard shortcut that toggles the dialog. None by
+   * default. See `TackWidgetConfig.hotkey` for syntax (e.g. `'mod+alt+f'`). */
+  hotkey?: string
   /** Called after a successful submission. */
   onSubmit?: () => void
   /** Called on submission error. */
@@ -77,6 +80,7 @@ export function TackLauncher({
   placeholder,
   user,
   metadata,
+  hotkey,
   onSubmit,
   onError,
 }: TackLauncherProps) {
@@ -104,6 +108,7 @@ export function TackLauncher({
       submitLabel,
       cancelLabel,
       placeholder,
+      hotkey,
       user: mutableRef.current.user,
       metadata: mutableRef.current.metadata,
       onSubmit: () => mutableRef.current.onSubmit?.(),
@@ -130,6 +135,7 @@ export function TackLauncher({
     submitLabel,
     cancelLabel,
     placeholder,
+    hotkey,
   ])
 
   useEffect(() => {

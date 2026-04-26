@@ -54,6 +54,10 @@ export interface TackLauncherHandle {
   open: () => void
   /** Close the dialog. */
   close: () => void
+  /** Open if closed, close if open. */
+  toggle: () => void
+  /** True when the dialog is currently open. */
+  isOpen: () => boolean
   /** Remove the launcher and the underlying widget. Idempotent. */
   destroy: () => void
   /** Patch mutable fields on the underlying widget without re-mount. */
@@ -75,7 +79,14 @@ function nextLauncherId(): string {
 
 function mountLauncher(config: TackLauncherConfig): TackLauncherHandle {
   if (typeof window === 'undefined' || typeof document === 'undefined') {
-    return { open() {}, close() {}, destroy() {}, update() {} }
+    return {
+      open() {},
+      close() {},
+      toggle() {},
+      isOpen: () => false,
+      destroy() {},
+      update() {},
+    }
   }
 
   const inline = config.inline ?? false
@@ -155,6 +166,8 @@ function mountLauncher(config: TackLauncherConfig): TackLauncherHandle {
   return {
     open: () => handle.open(),
     close: () => handle.close(),
+    toggle: () => handle.toggle(),
+    isOpen: () => handle.isOpen(),
     destroy,
     update: (partial) => handle.update(partial),
   }
