@@ -17,6 +17,12 @@ export type {
   TackLauncherVariant,
 } from './launcher'
 export { SDK_VERSION } from './transport'
+export { bindHotkey, parseHotkey, matchHotkey } from './hotkey'
+export type {
+  ParsedHotkey,
+  ParseHotkeyOptions,
+  BindHotkeyOptions,
+} from './hotkey'
 
 export interface TackConfig {
   /** Public project id from the Tack dashboard, e.g. "proj_..." */

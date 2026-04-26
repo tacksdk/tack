@@ -27,6 +27,9 @@ export interface TackWidgetProps {
   metadata?: Record<string, unknown>
   /** className applied to the trigger button */
   className?: string
+  /** Optional global keyboard shortcut that toggles the dialog. None by
+   * default. See `TackWidgetConfig.hotkey` for syntax (e.g. `'mod+alt+f'`). */
+  hotkey?: string
   /** Called after a successful submission. Latest reference is always used. */
   onSubmit?: () => void
   /** Called on submission error. Latest reference is always used. */
@@ -64,6 +67,7 @@ export function TackWidget({
   user,
   metadata,
   className,
+  hotkey,
   onSubmit,
   onError,
 }: TackWidgetProps) {
@@ -85,6 +89,7 @@ export function TackWidget({
       submitLabel,
       cancelLabel,
       placeholder,
+      hotkey,
       user: mutableRef.current.user,
       metadata: mutableRef.current.metadata,
       onSubmit: () => mutableRef.current.onSubmit?.(),
@@ -97,7 +102,7 @@ export function TackWidget({
       handleRef.current = null
       setReady(false)
     }
-  }, [projectId, endpoint, theme, injectStyles, title, submitLabel, cancelLabel, placeholder])
+  }, [projectId, endpoint, theme, injectStyles, title, submitLabel, cancelLabel, placeholder, hotkey])
 
   // Patch user/metadata on the live handle when they change. Plain
   // useEffect (not useLayoutEffect) because update() only writes in-memory
@@ -137,6 +142,7 @@ export function useTack(config: Parameters<typeof Tack.init>[0]): TackHandle | n
     submitLabel,
     cancelLabel,
     placeholder,
+    hotkey,
     user,
     metadata,
     onSubmit,
@@ -157,6 +163,7 @@ export function useTack(config: Parameters<typeof Tack.init>[0]): TackHandle | n
       submitLabel,
       cancelLabel,
       placeholder,
+      hotkey,
       user: mutableRef.current.user,
       metadata: mutableRef.current.metadata,
       onSubmit: (result) => mutableRef.current.onSubmit?.(result),
@@ -168,7 +175,7 @@ export function useTack(config: Parameters<typeof Tack.init>[0]): TackHandle | n
       handle.destroy()
       handleRef.current = null
     }
-  }, [projectId, endpoint, theme, injectStyles, title, submitLabel, cancelLabel, placeholder])
+  }, [projectId, endpoint, theme, injectStyles, title, submitLabel, cancelLabel, placeholder, hotkey])
 
   useEffect(() => {
     handleRef.current?.update({ user, metadata })

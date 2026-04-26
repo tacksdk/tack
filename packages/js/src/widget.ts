@@ -11,6 +11,7 @@
 // foundation of.
 
 import { TackError, docUrl } from './errors'
+import { bindHotkey } from './hotkey'
 import {
   DEFAULT_ENDPOINT,
   SDK_VERSION,
@@ -67,6 +68,20 @@ export interface TackWidgetConfig {
   onOpen?: () => void
   /** Called whenever the dialog closes (cancel, ESC, programmatic close, post-submit). */
   onClose?: () => void
+  /**
+   * Optional global keyboard shortcut that toggles the dialog. None by
+   * default. Combo syntax: `+`-separated tokens, case-insensitive.
+   *   modifiers: mod | cmd | meta | ctrl | alt | option | shift
+   *   key: single character or named ('escape', 'enter', 'space', 'tab',
+   *        'backspace', 'delete', 'up'/'down'/'left'/'right', 'f1'-'f12')
+   *   examples: 'mod+alt+f', 'ctrl+shift+/', 'cmd+k'
+   *
+   * `mod` resolves to ⌘ on mac and ctrl elsewhere. The shortcut is skipped
+   * when focus is in an input/textarea/contenteditable. For full control
+   * (custom guards, scope, action), import `bindHotkey` and call it
+   * directly against the returned handle.
+   */
+  hotkey?: string
 }
 
 export interface TackHandle {
@@ -74,6 +89,10 @@ export interface TackHandle {
   open: () => void
   /** Close the dialog. Aborts any in-flight submit. Idempotent. */
   close: () => void
+  /** Open if closed, close if open. No-op after destroy(). */
+  toggle: () => void
+  /** True when the dialog is currently open. False after destroy(). */
+  isOpen: () => boolean
   /** Remove the dialog, abort in-flight submit, drop refs. Idempotent. */
   destroy: () => void
   /**
@@ -116,7 +135,14 @@ function init(config: TackWidgetConfig): TackHandle {
     throw new Error('[tack] Tack.init() requires a projectId')
   }
   if (typeof window === 'undefined' || typeof document === 'undefined') {
-    return { open() {}, close() {}, destroy() {}, update() {} }
+    return {
+      open() {},
+      close() {},
+      toggle() {},
+      isOpen: () => false,
+      destroy() {},
+      update() {},
+    }
   }
 
   const state: InternalState = {
@@ -276,10 +302,30 @@ function init(config: TackWidgetConfig): TackHandle {
     if (state.dialog?.open) state.dialog.close()
   }
 
+  function isOpen(): boolean {
+    return !state.destroyed && state.dialog?.open === true
+  }
+
+  function toggle(): void {
+    if (state.destroyed) return
+    if (isOpen()) close()
+    else open()
+  }
+
+  // Pre-handle for the hotkey binding: bindHotkey reads .open/.close/.toggle
+  // off the object, but we want the live functions, not stale references —
+  // closures over `open`/`close`/`toggle` are fine here, just use a literal.
+  let unbindHotkey: (() => void) | null = null
+  if (config.hotkey) {
+    unbindHotkey = bindHotkey({ open, close, toggle }, config.hotkey)
+  }
+
   function destroy(): void {
     if (state.destroyed) return
     state.destroyed = true
     state.abort?.abort()
+    unbindHotkey?.()
+    unbindHotkey = null
     state.dialog?.remove()
     state.dialog = null
     state.textarea = null
@@ -303,7 +349,7 @@ function init(config: TackWidgetConfig): TackHandle {
     if ('onClose' in partial) state.config.onClose = partial.onClose
   }
 
-  return { open, close, destroy, update }
+  return { open, close, toggle, isOpen, destroy, update }
 }
 
 // Monotonic counter for unique element ids — collision-free across the
