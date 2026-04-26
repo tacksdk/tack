@@ -201,17 +201,33 @@ export function parseHotkey(
  * Test whether a KeyboardEvent matches a parsed hotkey. Modifier match is
  * EXACT — listed modifiers must be down, unlisted must be up. Key match is
  * case-insensitive on letters.
+ *
+ * For single-letter and single-digit combos we also accept `event.code`
+ * (e.g. `KeyF`, `Digit5`) — on macOS, Option+letter produces a transformed
+ * `event.key` (Option+F → `ƒ`) but `event.code` stays `KeyF`. Without this
+ * fallback `mod+alt+f` would never fire on mac. Punctuation/named keys
+ * stick to `event.key` so layout-aware combos like `shift+/` keep working.
  */
 export function matchHotkey(parsed: ParsedHotkey, event: KeyboardEvent): boolean {
   if (event.ctrlKey !== parsed.ctrl) return false
   if (event.metaKey !== parsed.meta) return false
   if (event.altKey !== parsed.alt) return false
   if (event.shiftKey !== parsed.shift) return false
-  // event.key is layout-aware. For letters we lowercase both sides; for
-  // single-char punctuation we compare as-is. Named keys come from event.key
-  // verbatim ('Escape', 'Enter', 'ArrowUp'...) which we lowercase.
-  const eventKey = event.key.length === 1 ? event.key.toLowerCase() : event.key.toLowerCase()
-  return eventKey === parsed.key
+  const eventKey = event.key.toLowerCase()
+  if (eventKey === parsed.key) return true
+  // Fallback to event.code for ASCII letters (a-z) and digits (0-9). Other
+  // single-char keys (punctuation) and named keys do not get the code path
+  // because their `code` values are layout-specific (e.g. `Slash` for `/`
+  // on US, `Minus` on Dvorak) and would surprise users who type the literal.
+  if (parsed.key.length === 1) {
+    if (parsed.key >= 'a' && parsed.key <= 'z') {
+      return event.code === 'Key' + parsed.key.toUpperCase()
+    }
+    if (parsed.key >= '0' && parsed.key <= '9') {
+      return event.code === 'Digit' + parsed.key
+    }
+  }
+  return false
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {

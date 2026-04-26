@@ -243,6 +243,52 @@ describe('matchHotkey: case-insensitive letters', () => {
   })
 })
 
+describe('matchHotkey: mac Option+letter (transformed event.key)', () => {
+  // On macOS, Option+letter produces a special character as event.key
+  // (Option+F → 'ƒ', Option+L → '¬', etc.). event.code stays 'KeyF', 'KeyL'.
+  // Without code fallback, mod+alt+f would never fire on mac.
+  it('matches mod+alt+f when event.key is "ƒ" but code is KeyF', () => {
+    const p = parseHotkey('mod+alt+f', { mac: true })
+    expect(
+      matchHotkey(
+        p,
+        ke({ key: 'ƒ', code: 'KeyF', metaKey: true, altKey: true }),
+      ),
+    ).toBe(true)
+  })
+
+  it('matches mod+alt+l when event.key is "¬" but code is KeyL', () => {
+    const p = parseHotkey('mod+alt+l', { mac: true })
+    expect(
+      matchHotkey(
+        p,
+        ke({ key: '¬', code: 'KeyL', metaKey: true, altKey: true }),
+      ),
+    ).toBe(true)
+  })
+
+  it('still matches via event.key when code is missing', () => {
+    const p = parseHotkey('mod+f', { mac: true })
+    expect(matchHotkey(p, ke({ key: 'f', metaKey: true }))).toBe(true)
+  })
+
+  it('matches digits via Digit code', () => {
+    const p = parseHotkey('mod+5', { mac: true })
+    expect(
+      matchHotkey(p, ke({ key: '∞', code: 'Digit5', metaKey: true })),
+    ).toBe(true)
+  })
+
+  it('does NOT use code fallback for punctuation', () => {
+    // shift+/ should match via event.key '?' (US layout), not via Slash code,
+    // because Slash means different things on different layouts.
+    const p = parseHotkey('shift+/', { mac: false })
+    expect(matchHotkey(p, ke({ key: '/', code: 'Slash', shiftKey: true }))).toBe(true)
+    // event.key still authoritative — no surprise code-based match
+    expect(matchHotkey(p, ke({ key: 'x', code: 'Slash', shiftKey: true }))).toBe(false)
+  })
+})
+
 describe('matchHotkey: named keys', () => {
   it('matches Escape', () => {
     const p = parseHotkey('esc', { mac: false })
