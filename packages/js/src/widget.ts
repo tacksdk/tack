@@ -190,6 +190,19 @@ function init(config: TackWidgetConfig): TackHandle {
     dialog.addEventListener('close', () => {
       if (!state.destroyed) state.config.onClose?.()
     })
+    // Backdrop click closes the dialog. The native <dialog> element treats the
+    // backdrop as part of itself — clicks on the backdrop fire with
+    // event.target === dialog, while clicks on the form/buttons fire with
+    // those nested elements as the target. Mousedown/mouseup tracked separately
+    // so a textarea drag-select that ends on the backdrop doesn't dismiss.
+    let pressOnBackdrop = false
+    dialog.addEventListener('mousedown', (event) => {
+      pressOnBackdrop = event.target === dialog
+    })
+    dialog.addEventListener('click', (event) => {
+      if (event.target === dialog && pressOnBackdrop) close()
+      pressOnBackdrop = false
+    })
 
     return dialog
   }
