@@ -146,6 +146,59 @@ export interface TackHandle {
   ) => void
 }
 
+/**
+ * Lifecycle state machine. Per docs/phase-2-extraction.md "Step 2":
+ *
+ *   idle ─open()→ composing ─submit→ submitting ─┬→ success ─1500ms→ closed
+ *                  ↑                              ├→ error_retryable
+ *                  ├─ retry ─────────────────────┤   (429, 5xx — retry button)
+ *                  ├─ retry ─────────────────────┤→ error_docs
+ *                  └─ keystroke ─────────────────┤   (4xx — doc link)
+ *                                                 └→ network_error
+ *                                                    (fetch threw — retry button)
+ *
+ *   close()/destroy() reset to idle from any state.
+ *
+ * Each state controls visible DOM regions: status (aria-live), submit, retry,
+ * doc link. Illegal transitions are no-ops with a console.debug log so bugs
+ * surface in dev without crashing in prod.
+ */
+type WidgetState =
+  | 'idle'
+  | 'composing'
+  | 'submitting'
+  | 'success'
+  | 'error_retryable'
+  | 'error_docs'
+  | 'network_error'
+
+const LEGAL_TRANSITIONS: Record<WidgetState, readonly WidgetState[]> = {
+  idle: ['composing'],
+  composing: ['submitting', 'idle'],
+  submitting: ['success', 'error_retryable', 'error_docs', 'network_error', 'idle'],
+  success: ['idle'],
+  error_retryable: ['submitting', 'composing', 'idle'],
+  error_docs: ['composing', 'idle'],
+  network_error: ['submitting', 'composing', 'idle'],
+}
+
+/** ms to wait on `success` before auto-closing the dialog. Plan minimum: 1500. */
+const SUCCESS_AUTOCLOSE_MS = 1800
+
+/**
+ * Map a TackError to the FSM error bucket. Server-side issues that a retry
+ * might fix (rate limit, 5xx) go to `error_retryable`. Network failures are
+ * a separate bucket so the message can be specific. Everything else (4xx
+ * validation, auth, payload too large, not found) goes to `error_docs` with
+ * a link to the canonical docs page.
+ */
+function classifyError(err: TackError): 'error_retryable' | 'error_docs' | 'network_error' {
+  if (err.type === 'network_error') return 'network_error'
+  if (err.type === 'rate_limited') return 'error_retryable'
+  if (err.status !== null && err.status >= 500) return 'error_retryable'
+  return 'error_docs'
+}
+
 interface InternalState {
   config: TackWidgetConfig & { endpoint: string }
   /** Light-DOM host element holding the closed shadow root. */
@@ -153,6 +206,16 @@ interface InternalState {
   dialog: HTMLDialogElement | null
   textarea: HTMLTextAreaElement | null
   submitBtn: HTMLButtonElement | null
+  /** Aria-live region inside the dialog for FSM status announcements. */
+  statusEl: HTMLDivElement | null
+  /** Retry button shown in error_retryable + network_error states. */
+  retryBtn: HTMLButtonElement | null
+  /** Doc-link anchor shown in error_docs state. */
+  docLink: HTMLAnchorElement | null
+  /** Current FSM state. Drives DOM visibility + aria-live announcements. */
+  fsm: WidgetState
+  /** Set during `success` state, cleared on transition out. */
+  successTimer: ReturnType<typeof setTimeout> | null
   abort: AbortController | null
   destroyed: boolean
 }
@@ -207,6 +270,11 @@ function init(config: TackWidgetConfig): TackHandle {
     dialog: null,
     textarea: null,
     submitBtn: null,
+    statusEl: null,
+    retryBtn: null,
+    docLink: null,
+    fsm: 'idle',
+    successTimer: null,
     abort: null,
     destroyed: false,
   }
@@ -266,6 +334,30 @@ function init(config: TackWidgetConfig): TackHandle {
     textarea.setAttribute('data-tack-input', '')
     textarea.setAttribute('aria-label', state.config.title ?? 'Send feedback')
 
+    // Aria-live status region — empty during composing/submitting, populated
+    // by transitionTo() with success/error messages. role="status" + aria-live
+    // "polite" so the announcement waits for the user to finish typing rather
+    // than interrupting (success/error UX). aria-atomic ensures the FULL new
+    // message is read each transition, not just the diff.
+    const statusEl = document.createElement('div')
+    statusEl.setAttribute('data-tack-status', '')
+    statusEl.setAttribute('role', 'status')
+    statusEl.setAttribute('aria-live', 'polite')
+    statusEl.setAttribute('aria-atomic', 'true')
+    // Hidden until a state populates it. We toggle hidden vs setting display
+    // so screen readers still see the live region exists and know to watch it.
+    statusEl.hidden = true
+
+    // Doc-link anchor used in `error_docs` state. rel=noopener prevents the
+    // host page from being reached via window.opener after the docs site
+    // navigates. Hidden by default; transitionTo reveals + hrefs it.
+    const docLink = document.createElement('a')
+    docLink.setAttribute('data-tack-doc-link', '')
+    docLink.setAttribute('target', '_blank')
+    docLink.setAttribute('rel', 'noopener noreferrer')
+    docLink.textContent = 'Read the docs'
+    docLink.hidden = true
+
     const actions = document.createElement('div')
     actions.setAttribute('data-tack-actions', '')
 
@@ -274,21 +366,46 @@ function init(config: TackWidgetConfig): TackHandle {
     cancelBtn.textContent = state.config.cancelLabel ?? 'Cancel'
     cancelBtn.setAttribute('data-tack-cancel', '')
 
+    // Retry button is mounted but hidden in normal states. Visible only in
+    // `error_retryable` + `network_error`. Submit triggers a fresh attempt
+    // via the same code path as form submit.
+    const retryBtn = document.createElement('button')
+    retryBtn.type = 'button'
+    retryBtn.textContent = 'Try again'
+    retryBtn.setAttribute('data-tack-retry', '')
+    retryBtn.hidden = true
+
     const submitBtn = document.createElement('button')
     submitBtn.type = 'submit'
     submitBtn.textContent = state.config.submitLabel ?? 'Send'
     submitBtn.setAttribute('data-tack-submit', '')
 
-    actions.append(cancelBtn, submitBtn)
-    form.append(titleEl, textarea, actions)
+    actions.append(cancelBtn, retryBtn, submitBtn)
+    form.append(titleEl, textarea, statusEl, docLink, actions)
     dialog.append(form)
     shadow.append(dialog)
 
     state.dialog = dialog
     state.textarea = textarea
     state.submitBtn = submitBtn
+    state.statusEl = statusEl
+    state.retryBtn = retryBtn
+    state.docLink = docLink
 
     cancelBtn.addEventListener('click', () => close())
+    retryBtn.addEventListener('click', () => {
+      // Retry from any error state goes straight back through submit.
+      // handleSubmit reads the textarea value, which the user may have edited,
+      // so retry isn't required to re-send identical bytes.
+      void handleSubmit()
+    })
+    // While in error_docs, any keystroke in the textarea returns to composing
+    // (clears the error so the user can fix and resubmit without an explicit
+    // dismiss). Cheaper than a separate dismiss button, matches the plan
+    // "any keystroke or button click resets" transition.
+    textarea.addEventListener('input', () => {
+      if (state.fsm === 'error_docs') transitionTo('composing')
+    })
     form.addEventListener('submit', (event) => {
       event.preventDefault()
       void handleSubmit()
@@ -313,12 +430,130 @@ function init(config: TackWidgetConfig): TackHandle {
     return dialog
   }
 
+  /**
+   * Validated FSM transition. Updates `state.fsm`, mirrors to the dialog as
+   * `data-tack-state` (for CSS selectors), updates DOM visibility (status,
+   * retry, doc link, submit), and announces via aria-live. Illegal
+   * transitions are no-ops with a console.debug log so devs see them but
+   * production keeps running.
+   */
+  function transitionTo(
+    next: WidgetState,
+    payload?: { error?: TackError; result?: TackFeedbackCreated },
+  ): void {
+    if (state.destroyed) return
+    const legal = LEGAL_TRANSITIONS[state.fsm]
+    if (!legal.includes(next)) {
+      // Use console.debug so it's silent unless devtools verbose is on.
+      // Surfaces real bugs without spamming production logs.
+      if (typeof console !== 'undefined' && typeof console.debug === 'function') {
+        console.debug('[tack] illegal FSM transition:', state.fsm, '→', next)
+      }
+      return
+    }
+
+    // Clear any pending success-auto-close when leaving the success state.
+    if (state.fsm === 'success' && state.successTimer !== null) {
+      clearTimeout(state.successTimer)
+      state.successTimer = null
+    }
+
+    state.fsm = next
+    state.dialog?.setAttribute('data-tack-state', next)
+
+    const status = state.statusEl
+    const retry = state.retryBtn
+    const submit = state.submitBtn
+    const docLink = state.docLink
+    if (!status || !retry || !submit || !docLink) return
+
+    // Reset visibility flags each transition; per-state branches set what they
+    // need. Keeps state-leak between transitions impossible.
+    status.hidden = true
+    status.textContent = ''
+    retry.hidden = true
+    submit.hidden = false
+    submit.disabled = false
+    submit.textContent = state.config.submitLabel ?? 'Send'
+    docLink.hidden = true
+    docLink.removeAttribute('href')
+
+    switch (next) {
+      case 'idle':
+      case 'composing':
+        // Default UI: input visible, submit enabled. Nothing extra to do.
+        break
+
+      case 'submitting':
+        submit.disabled = true
+        submit.textContent = 'Sending…'
+        break
+
+      case 'success': {
+        status.hidden = false
+        status.textContent = 'Thanks for the feedback.'
+        // Hide the submit + retry while the success message displays — the
+        // user is done; presenting a button now invites a duplicate submit.
+        submit.hidden = true
+        retry.hidden = true
+        // Auto-close after SUCCESS_AUTOCLOSE_MS. Stash the timer so close()
+        // / destroy() / a new transition can cancel it.
+        state.successTimer = setTimeout(() => {
+          state.successTimer = null
+          if (state.destroyed) return
+          if (state.fsm === 'success') close()
+        }, SUCCESS_AUTOCLOSE_MS)
+        break
+      }
+
+      case 'error_retryable': {
+        status.hidden = false
+        const err = payload?.error
+        const message =
+          err?.type === 'rate_limited'
+            ? 'Slow down, try again in a moment.'
+            : err?.message
+              ? `Server error: ${err.message}. Try again.`
+              : 'Server hiccup. Try again.'
+        status.textContent = message
+        // Submit hidden, retry visible — explicit retry is clearer than
+        // a re-enabled submit (user might think their first attempt was lost).
+        submit.hidden = true
+        retry.hidden = false
+        break
+      }
+
+      case 'error_docs': {
+        status.hidden = false
+        const err = payload?.error
+        status.textContent = err?.message ?? 'Something went wrong.'
+        submit.disabled = false
+        if (err?.docUrl) {
+          docLink.hidden = false
+          docLink.setAttribute('href', err.docUrl)
+        }
+        break
+      }
+
+      case 'network_error': {
+        status.hidden = false
+        status.textContent = 'Network problem. Check your connection and retry.'
+        submit.hidden = true
+        retry.hidden = false
+        break
+      }
+    }
+  }
+
   async function handleSubmit(): Promise<void> {
     if (state.destroyed || !state.textarea || !state.submitBtn) return
+    // Block re-entry while a request is in flight. The FSM gates this; the
+    // textarea check below is belt+suspenders.
+    if (state.fsm === 'submitting') return
     const body = state.textarea.value.trim()
     if (!body) return
 
-    state.submitBtn.disabled = true
+    transitionTo('submitting')
     state.abort = new AbortController()
     const abortSignal = state.abort.signal
 
@@ -344,7 +579,10 @@ function init(config: TackWidgetConfig): TackHandle {
       // success UI, and firing onSubmit after destroy is surprising.
       if (state.destroyed || abortSignal.aborted) return
       state.textarea.value = ''
-      close()
+      // Transition to success first (shows the aria-live message + schedules
+      // auto-close), THEN fire the user callback. Order matters: a slow
+      // onSubmit handler shouldn't delay the visible success state.
+      transitionTo('success', { result })
       state.config.onSubmit?.(result)
     } catch (err) {
       if (state.destroyed || abortSignal.aborted) return
@@ -359,9 +597,12 @@ function init(config: TackWidgetConfig): TackHandle {
               },
               null,
             )
+      // FSM picks the right error bucket from the envelope; UI updates from
+      // transitionTo's per-state branch. onError still fires for callers
+      // that want their own UX layer on top.
+      transitionTo(classifyError(tackErr), { error: tackErr })
       state.config.onError?.(tackErr)
     } finally {
-      if (!state.destroyed && state.submitBtn) state.submitBtn.disabled = false
       state.abort = null
     }
   }
@@ -371,6 +612,10 @@ function init(config: TackWidgetConfig): TackHandle {
     const dialog = ensureMounted()
     if (!dialog.open) {
       dialog.showModal()
+      // Reset to composing on every open. Reopening after a previous error
+      // or success should land the user back in the input, not show stale
+      // status messages from the prior session.
+      transitionTo('composing')
       state.config.onOpen?.()
     }
     state.textarea?.focus()
@@ -380,6 +625,9 @@ function init(config: TackWidgetConfig): TackHandle {
     if (state.destroyed) return
     state.abort?.abort()
     if (state.dialog?.open) state.dialog.close()
+    // Reset FSM after closing so a subsequent open() starts clean. Skip if
+    // we're already idle (e.g. close() called before open() ever fired).
+    if (state.fsm !== 'idle') transitionTo('idle')
   }
 
   function isOpen(): boolean {
@@ -404,6 +652,10 @@ function init(config: TackWidgetConfig): TackHandle {
     if (state.destroyed) return
     state.destroyed = true
     state.abort?.abort()
+    if (state.successTimer !== null) {
+      clearTimeout(state.successTimer)
+      state.successTimer = null
+    }
     unbindHotkey?.()
     unbindHotkey = null
     // Removing the host cascades: shadow root, dialog, listeners, all gone.

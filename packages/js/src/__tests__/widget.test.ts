@@ -182,7 +182,7 @@ describe('Tack widget', () => {
     expect(countDialogs()).toBe(0)
   })
 
-  it('successful submit fires onSubmit, clears textarea, closes dialog', async () => {
+  it('successful submit transitions to success state, then auto-closes', async () => {
     const onSubmit = vi.fn()
     const fetchMock = vi.fn(async () =>
       ({
@@ -193,31 +193,46 @@ describe('Tack widget', () => {
       }) as unknown as Response,
     )
     vi.stubGlobal('fetch', fetchMock)
+    // Fake timers so we can fast-forward past the 1800ms success auto-close
+    // without making real-world test runs slow.
+    vi.useFakeTimers({ shouldAdvanceTime: true })
 
-    const handle = Tack.init({ projectId: 'proj_test', onSubmit })
-    handle.open()
-    const textarea = inShadow<HTMLTextAreaElement>('[data-tack-input]')!
-    textarea.value = 'great app'
-    inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
-    await flush()
+    try {
+      const handle = Tack.init({ projectId: 'proj_test', onSubmit })
+      handle.open()
+      const textarea = inShadow<HTMLTextAreaElement>('[data-tack-input]')!
+      textarea.value = 'great app'
+      inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+      await vi.advanceTimersByTimeAsync(0) // resolve fetch promise microtask
 
-    expect(fetchMock).toHaveBeenCalledOnce()
-    const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
-    expect(call[0]).toMatch(/\/api\/v1\/feedback$/)
-    expect(call[1].headers).toMatchObject({
-      'X-Tack-SDK-Version': expect.any(String),
-      'Idempotency-Key': expect.any(String),
-    })
-    expect(onSubmit).toHaveBeenCalledWith({
-      id: 'fbk_1',
-      url: 'https://x',
-      created_at: '2026-01-01',
-    })
-    expect(textarea.value).toBe('')
-    expect(
-      getDialog()!.open,
-    ).toBe(false)
-    handle.destroy()
+      expect(fetchMock).toHaveBeenCalledOnce()
+      const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+      expect(call[0]).toMatch(/\/api\/v1\/feedback$/)
+      expect(call[1].headers).toMatchObject({
+        'X-Tack-SDK-Version': expect.any(String),
+        'Idempotency-Key': expect.any(String),
+      })
+      expect(onSubmit).toHaveBeenCalledWith({
+        id: 'fbk_1',
+        url: 'https://x',
+        created_at: '2026-01-01',
+      })
+      // Textarea cleared, dialog still OPEN with success state showing the
+      // confirmation message (per FSM spec — success auto-closes after a beat
+      // so the user sees the acknowledgement).
+      expect(textarea.value).toBe('')
+      expect(getDialog()!.open).toBe(true)
+      expect(getDialog()!.getAttribute('data-tack-state')).toBe('success')
+      const status = inShadow<HTMLDivElement>('[data-tack-status]')!
+      expect(status.hidden).toBe(false)
+      expect(status.textContent).toMatch(/thanks/i)
+      // Advance past the auto-close timeout — dialog now closes on its own.
+      await vi.advanceTimersByTimeAsync(2000)
+      expect(getDialog()!.open).toBe(false)
+      handle.destroy()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('failed submit fires onError and keeps the dialog open', async () => {
@@ -464,6 +479,215 @@ describe('Tack widget', () => {
       const handle = Tack.init({ projectId: 'proj_test' })
       handle.destroy()
       expect(() => handle.update({ user: { id: 'x' } })).not.toThrow()
+    })
+  })
+
+  describe('FSM lifecycle', () => {
+    function mockJsonError(status: number, body: unknown) {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          ({
+            ok: false,
+            status,
+            text: async () => JSON.stringify(body),
+          }) as unknown as Response,
+        ),
+      )
+    }
+
+    async function submitWith(handle: ReturnType<typeof Tack.init>, body: string) {
+      handle.open()
+      inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = body
+      inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+      await flush()
+    }
+
+    it('429 → error_retryable: status visible, retry button shown, submit hidden', async () => {
+      mockJsonError(429, {
+        error: { type: 'rate_limited', message: 'slow down', doc_url: 'https://x' },
+      })
+      const handle = Tack.init({ projectId: 'proj_test' })
+      await submitWith(handle, 'hi')
+
+      expect(getDialog()!.getAttribute('data-tack-state')).toBe('error_retryable')
+      const status = inShadow<HTMLDivElement>('[data-tack-status]')!
+      expect(status.hidden).toBe(false)
+      const submit = inShadow<HTMLButtonElement>('[data-tack-submit]')!
+      const retry = inShadow<HTMLButtonElement>('[data-tack-retry]')!
+      expect(submit.hidden).toBe(true)
+      expect(retry.hidden).toBe(false)
+      // Dialog stays open
+      expect(getDialog()!.open).toBe(true)
+      handle.destroy()
+    })
+
+    it('500 → error_retryable (5xx is treated as a retryable server error)', async () => {
+      mockJsonError(500, {
+        error: { type: 'internal_error', message: 'oops', doc_url: 'https://x' },
+      })
+      const handle = Tack.init({ projectId: 'proj_test' })
+      await submitWith(handle, 'hi')
+      expect(getDialog()!.getAttribute('data-tack-state')).toBe('error_retryable')
+      handle.destroy()
+    })
+
+    it('400 → error_docs: doc link href is set and visible, retry hidden', async () => {
+      mockJsonError(400, {
+        error: {
+          type: 'invalid_request',
+          message: 'body required',
+          doc_url: 'https://tacksdk.com/docs/errors#invalid_request',
+        },
+      })
+      const handle = Tack.init({ projectId: 'proj_test' })
+      await submitWith(handle, 'hi')
+
+      expect(getDialog()!.getAttribute('data-tack-state')).toBe('error_docs')
+      const docLink = inShadow<HTMLAnchorElement>('[data-tack-doc-link]')!
+      expect(docLink.hidden).toBe(false)
+      expect(docLink.getAttribute('href')).toBe(
+        'https://tacksdk.com/docs/errors#invalid_request',
+      )
+      const retry = inShadow<HTMLButtonElement>('[data-tack-retry]')!
+      expect(retry.hidden).toBe(true)
+      handle.destroy()
+    })
+
+    it('network failure → network_error state with retry button', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          throw new TypeError('Failed to fetch')
+        }),
+      )
+      const handle = Tack.init({ projectId: 'proj_test' })
+      await submitWith(handle, 'hi')
+
+      expect(getDialog()!.getAttribute('data-tack-state')).toBe('network_error')
+      const retry = inShadow<HTMLButtonElement>('[data-tack-retry]')!
+      expect(retry.hidden).toBe(false)
+      const status = inShadow<HTMLDivElement>('[data-tack-status]')!
+      expect(status.textContent).toMatch(/network/i)
+      handle.destroy()
+    })
+
+    it('retry button from error_retryable runs another submit attempt', async () => {
+      let callCount = 0
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => {
+          callCount++
+          if (callCount === 1) {
+            return {
+              ok: false,
+              status: 429,
+              text: async () =>
+                JSON.stringify({
+                  error: { type: 'rate_limited', message: 'slow', doc_url: 'x' },
+                }),
+            } as unknown as Response
+          }
+          return {
+            ok: true,
+            status: 200,
+            text: async () =>
+              JSON.stringify({ id: 'fbk_1', url: 'x', created_at: 'x' }),
+          } as unknown as Response
+        }),
+      )
+      const handle = Tack.init({ projectId: 'proj_test' })
+      await submitWith(handle, 'hi')
+      expect(getDialog()!.getAttribute('data-tack-state')).toBe('error_retryable')
+
+      const retry = inShadow<HTMLButtonElement>('[data-tack-retry]')!
+      retry.click()
+      await flush()
+
+      expect(callCount).toBe(2)
+      // Second attempt succeeded → success state
+      expect(getDialog()!.getAttribute('data-tack-state')).toBe('success')
+      handle.destroy()
+    })
+
+    it('typing into textarea while in error_docs returns to composing', async () => {
+      mockJsonError(400, {
+        error: { type: 'invalid_request', message: 'bad', doc_url: 'x' },
+      })
+      const handle = Tack.init({ projectId: 'proj_test' })
+      await submitWith(handle, 'hi')
+      expect(getDialog()!.getAttribute('data-tack-state')).toBe('error_docs')
+
+      const textarea = inShadow<HTMLTextAreaElement>('[data-tack-input]')!
+      textarea.value = 'edited'
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+      expect(getDialog()!.getAttribute('data-tack-state')).toBe('composing')
+      const status = inShadow<HTMLDivElement>('[data-tack-status]')!
+      expect(status.hidden).toBe(true)
+      handle.destroy()
+    })
+
+    it('reopening after success starts fresh in composing state', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          ({
+            ok: true,
+            status: 200,
+            text: async () =>
+              JSON.stringify({ id: 'fbk_1', url: 'x', created_at: 'x' }),
+          }) as unknown as Response,
+        ),
+      )
+      const handle = Tack.init({ projectId: 'proj_test' })
+      await submitWith(handle, 'hi')
+      expect(getDialog()!.getAttribute('data-tack-state')).toBe('success')
+      handle.close()
+      handle.open()
+      // Fresh open: composing, status cleared, submit visible
+      expect(getDialog()!.getAttribute('data-tack-state')).toBe('composing')
+      const status = inShadow<HTMLDivElement>('[data-tack-status]')!
+      expect(status.hidden).toBe(true)
+      const submit = inShadow<HTMLButtonElement>('[data-tack-submit]')!
+      expect(submit.hidden).toBe(false)
+      handle.destroy()
+    })
+
+    it('aria-live region is set up correctly for screen readers', () => {
+      const handle = Tack.init({ projectId: 'proj_test' })
+      handle.open()
+      const status = inShadow<HTMLDivElement>('[data-tack-status]')!
+      expect(status.getAttribute('role')).toBe('status')
+      expect(status.getAttribute('aria-live')).toBe('polite')
+      expect(status.getAttribute('aria-atomic')).toBe('true')
+      handle.destroy()
+    })
+
+    it('destroy() during success clears the auto-close timer (no late close)', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      try {
+        vi.stubGlobal(
+          'fetch',
+          vi.fn(async () =>
+            ({
+              ok: true,
+              status: 200,
+              text: async () =>
+                JSON.stringify({ id: 'fbk_1', url: 'x', created_at: 'x' }),
+            }) as unknown as Response,
+          ),
+        )
+        const handle = Tack.init({ projectId: 'proj_test' })
+        await submitWith(handle, 'hi')
+        expect(getDialog()!.getAttribute('data-tack-state')).toBe('success')
+        handle.destroy()
+        // Advance past auto-close — host is gone, no close() should fire on a
+        // null dialog. Test passes if no exception.
+        await vi.advanceTimersByTimeAsync(3000)
+        expect(document.querySelector('tack-widget-host')).toBeNull()
+      } finally {
+        vi.useRealTimers()
+      }
     })
   })
 
