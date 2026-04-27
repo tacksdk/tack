@@ -218,6 +218,13 @@ interface InternalState {
   successTimer: ReturnType<typeof setTimeout> | null
   abort: AbortController | null
   destroyed: boolean
+  /**
+   * Element that had focus immediately before open() ran. close() restores
+   * focus here so keyboard users return to whatever invoked the dialog
+   * (typically the host's launcher button). Per DESIGN.md a11y checklist:
+   * "focus returns to trigger on close".
+   */
+  previousFocus: HTMLElement | null
 }
 
 /**
@@ -277,6 +284,7 @@ function init(config: TackWidgetConfig): TackHandle {
     successTimer: null,
     abort: null,
     destroyed: false,
+    previousFocus: null,
   }
 
   function ensureMounted(): HTMLDialogElement {
@@ -339,7 +347,12 @@ function init(config: TackWidgetConfig): TackHandle {
     // "polite" so the announcement waits for the user to finish typing rather
     // than interrupting (success/error UX). aria-atomic ensures the FULL new
     // message is read each transition, not just the diff.
+    //
+    // Status's id wires to textarea.aria-describedby in error states (see
+    // transitionTo) so screen readers link the field to its error message.
     const statusEl = document.createElement('div')
+    const statusId = `tack-status-${nextDialogId()}`
+    statusEl.id = statusId
     statusEl.setAttribute('data-tack-status', '')
     statusEl.setAttribute('role', 'status')
     statusEl.setAttribute('aria-live', 'polite')
@@ -465,7 +478,8 @@ function init(config: TackWidgetConfig): TackHandle {
     const retry = state.retryBtn
     const submit = state.submitBtn
     const docLink = state.docLink
-    if (!status || !retry || !submit || !docLink) return
+    const textarea = state.textarea
+    if (!status || !retry || !submit || !docLink || !textarea) return
 
     // Reset visibility flags each transition; per-state branches set what they
     // need. Keeps state-leak between transitions impossible.
@@ -477,6 +491,11 @@ function init(config: TackWidgetConfig): TackHandle {
     submit.textContent = state.config.submitLabel ?? 'Send'
     docLink.hidden = true
     docLink.removeAttribute('href')
+    // Clear error wiring on textarea by default; error_* branches set it.
+    // Per DESIGN.md a11y checklist: "Textarea gets aria-invalid +
+    // aria-describedby pointing at error on failure".
+    textarea.removeAttribute('aria-invalid')
+    textarea.removeAttribute('aria-describedby')
 
     switch (next) {
       case 'idle':
@@ -516,6 +535,8 @@ function init(config: TackWidgetConfig): TackHandle {
               ? `Server error: ${err.message}. Try again.`
               : 'Server hiccup. Try again.'
         status.textContent = message
+        textarea.setAttribute('aria-invalid', 'true')
+        textarea.setAttribute('aria-describedby', status.id)
         // Submit hidden, retry visible — explicit retry is clearer than
         // a re-enabled submit (user might think their first attempt was lost).
         submit.hidden = true
@@ -527,8 +548,12 @@ function init(config: TackWidgetConfig): TackHandle {
         status.hidden = false
         const err = payload?.error
         status.textContent = err?.message ?? 'Something went wrong.'
-        submit.disabled = false
-        if (err?.docUrl) {
+        textarea.setAttribute('aria-invalid', 'true')
+        textarea.setAttribute('aria-describedby', status.id)
+        // Accept only http(s) doc URLs. Defensive against a misconfigured
+        // backend sending javascript: or data: URLs — target=_blank +
+        // rel=noopener don't block javascript: scheme execution on click.
+        if (err?.docUrl && /^https?:\/\//i.test(err.docUrl)) {
           docLink.hidden = false
           docLink.setAttribute('href', err.docUrl)
         }
@@ -537,6 +562,8 @@ function init(config: TackWidgetConfig): TackHandle {
 
       case 'network_error': {
         status.hidden = false
+        textarea.setAttribute('aria-invalid', 'true')
+        textarea.setAttribute('aria-describedby', status.id)
         status.textContent = 'Network problem. Check your connection and retry.'
         submit.hidden = true
         retry.hidden = false
@@ -611,6 +638,13 @@ function init(config: TackWidgetConfig): TackHandle {
     if (state.destroyed) return
     const dialog = ensureMounted()
     if (!dialog.open) {
+      // Stash the focused element BEFORE showModal so close() can restore
+      // focus to it. Per DESIGN.md a11y checklist: "focus returns to trigger
+      // on close". Filter to HTMLElement so .focus() exists; SVG/MathML
+      // elements that can't be re-focused are intentionally skipped.
+      const active =
+        typeof document !== 'undefined' ? document.activeElement : null
+      state.previousFocus = active instanceof HTMLElement ? active : null
       dialog.showModal()
       // Reset to composing on every open. Reopening after a previous error
       // or success should land the user back in the input, not show stale
@@ -628,6 +662,19 @@ function init(config: TackWidgetConfig): TackHandle {
     // Reset FSM after closing so a subsequent open() starts clean. Skip if
     // we're already idle (e.g. close() called before open() ever fired).
     if (state.fsm !== 'idle') transitionTo('idle')
+    // Restore focus to whatever element invoked the dialog (typically the
+    // host's launcher button). Skip if the element was removed from the DOM
+    // since open() — focus a removed node throws on some engines.
+    const target = state.previousFocus
+    state.previousFocus = null
+    if (target && target.isConnected) {
+      try {
+        target.focus()
+      } catch {
+        // Tab-index/disabled state can throw; fail silent — the dialog has
+        // closed regardless and stealing focus on close is best-effort.
+      }
+    }
   }
 
   function isOpen(): boolean {
@@ -944,6 +991,58 @@ const TACK_DEFAULT_CSS = `
 [data-tack-widget] [data-tack-cancel]:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/*
+ * FSM-state DOM (status region, retry button, doc link). Mounted in every
+ * dialog and toggled hidden/visible by transitionTo(). All three need theme
+ * styling — without it they'd render with browser-default chrome and clash
+ * with the surrounding refined surface.
+ */
+[data-tack-widget] [data-tack-status] {
+  /* Inherits dialog font-size/family. role="status" announcement region. */
+  margin: 0;
+  font-size: var(--tack-text-sm);
+  line-height: 1.4;
+  color: var(--tack-fg-muted);
+}
+[data-tack-widget][data-tack-state="success"] [data-tack-status] {
+  color: var(--tack-success);
+  font-weight: 500;
+}
+[data-tack-widget][data-tack-state="error_retryable"] [data-tack-status],
+[data-tack-widget][data-tack-state="error_docs"] [data-tack-status],
+[data-tack-widget][data-tack-state="network_error"] [data-tack-status] {
+  color: var(--tack-error);
+}
+[data-tack-widget] [data-tack-doc-link] {
+  align-self: flex-start;
+  font-size: var(--tack-text-sm);
+  color: var(--tack-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+[data-tack-widget] [data-tack-doc-link]:hover {
+  color: var(--tack-accent-strong);
+}
+[data-tack-widget] [data-tack-doc-link]:focus-visible {
+  outline: 2px solid var(--tack-accent-soft);
+  outline-offset: 2px;
+  border-radius: var(--tack-radius-sm);
+}
+/* Retry button — same affordance level as submit (primary action in error
+   states), but uses accent-soft to read as "secondary attempt" rather than a
+   bright primary. Avoids visual conflict if both retry and submit are ever
+   visible together (currently mutually exclusive but defense in depth). */
+[data-tack-widget] [data-tack-retry] {
+  background: var(--tack-accent-soft);
+  color: var(--tack-fg);
+  border-color: var(--tack-border);
+}
+[data-tack-widget] [data-tack-retry]:hover {
+  background: var(--tack-accent);
+  color: var(--tack-fg-on-accent);
+  border-color: transparent;
 }
 
 /* Forced dark — preset.scheme === 'dark' OR legacy theme="dark" prop. */
