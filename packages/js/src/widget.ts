@@ -1041,6 +1041,24 @@ const TACK_DEFAULT_CSS = `
 [data-tack-widget][data-tack-state="success"] [data-tack-status] {
   color: var(--tack-success);
   font-weight: 500;
+  font-size: var(--tack-text-base);
+  /* Center the success message so the dialog reads as a confirmation card
+     during the auto-close window, not a half-empty form. */
+  text-align: center;
+  padding: var(--tack-space-md) 0;
+}
+/*
+ * Success state hides the form chrome — title, textarea, actions — so the
+ * dialog reads as a small confirmation card for the SUCCESS_AUTOCLOSE_MS
+ * window before auto-close. Without these rules the user saw an empty
+ * textarea (we clear the value on success) sitting under a tiny status
+ * line, which looked broken. CSS driven by [data-tack-state] is the source
+ * of truth — transitionTo() doesn't need to JS-toggle these.
+ */
+[data-tack-widget][data-tack-state="success"] [data-tack-title],
+[data-tack-widget][data-tack-state="success"] [data-tack-input],
+[data-tack-widget][data-tack-state="success"] [data-tack-actions] {
+  display: none;
 }
 [data-tack-widget][data-tack-state="error_retryable"] [data-tack-status],
 [data-tack-widget][data-tack-state="error_docs"] [data-tack-status],
