@@ -1400,18 +1400,49 @@ describe('Tack widget', () => {
       handle.destroy()
     })
 
-    it('clicking a rating option flips aria-pressed and stores value', () => {
+    it('clicking the Nth star fills stars 1..N (cumulative)', () => {
       const handle = Tack.init({ projectId: 'proj_test', rating: 'stars' })
       handle.open()
       const buttons = Array.from(
         widgetShadow()!.querySelectorAll<HTMLButtonElement>('[data-tack-rating-option]'),
       )
-      buttons[3].click()
-      expect(buttons[3].getAttribute('aria-pressed')).toBe('true')
-      for (let i = 0; i < buttons.length; i++) {
-        if (i === 3) continue
-        expect(buttons[i].getAttribute('aria-pressed')).toBe('false')
+      buttons[3].click() // 4th star
+      // Stars 1-4 pressed, 5 unpressed
+      for (let i = 0; i < 4; i++) {
+        expect(buttons[i].getAttribute('aria-pressed')).toBe('true')
       }
+      expect(buttons[4].getAttribute('aria-pressed')).toBe('false')
+      handle.destroy()
+    })
+
+    it('star fill: clicking a lower star reduces fill, doesnt extend', () => {
+      const handle = Tack.init({ projectId: 'proj_test', rating: 'stars' })
+      handle.open()
+      const buttons = Array.from(
+        widgetShadow()!.querySelectorAll<HTMLButtonElement>('[data-tack-rating-option]'),
+      )
+      buttons[4].click() // 5 stars
+      buttons[1].click() // back to 2 stars
+      expect(buttons[0].getAttribute('aria-pressed')).toBe('true')
+      expect(buttons[1].getAttribute('aria-pressed')).toBe('true')
+      expect(buttons[2].getAttribute('aria-pressed')).toBe('false')
+      expect(buttons[3].getAttribute('aria-pressed')).toBe('false')
+      expect(buttons[4].getAttribute('aria-pressed')).toBe('false')
+      handle.destroy()
+    })
+
+    it('thumbs/emoji stay single-select (no cumulative fill)', () => {
+      const handle = Tack.init({ projectId: 'proj_test', rating: 'emoji' })
+      handle.open()
+      const buttons = Array.from(
+        widgetShadow()!.querySelectorAll<HTMLButtonElement>('[data-tack-rating-option]'),
+      )
+      buttons[2].click() // 3rd emoji
+      // Lower emoji are NOT filled — single-select semantics for non-stars
+      expect(buttons[0].getAttribute('aria-pressed')).toBe('false')
+      expect(buttons[1].getAttribute('aria-pressed')).toBe('false')
+      expect(buttons[2].getAttribute('aria-pressed')).toBe('true')
+      expect(buttons[3].getAttribute('aria-pressed')).toBe('false')
       handle.destroy()
     })
 

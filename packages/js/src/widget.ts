@@ -738,11 +738,16 @@ function init(config: TackWidgetConfig): TackHandle {
             return
           }
           state.rating = opt.value
+          // Star semantics: clicking the Nth star fills stars 1..N (matches
+          // every star-rating UI on the planet). Other variants are
+          // single-select — only the clicked button shows pressed.
+          const isStars = ratingVariant === 'stars'
           for (const b of state.ratingButtons) {
-            b.setAttribute(
-              'aria-pressed',
-              b === btn ? 'true' : 'false',
-            )
+            const bValue = Number(b.getAttribute('data-tack-rating-value'))
+            const pressed = isStars
+              ? bValue <= opt.value
+              : b === btn
+            b.setAttribute('aria-pressed', pressed ? 'true' : 'false')
           }
         })
         ratingRow.append(btn)
@@ -1824,13 +1829,28 @@ const TACK_DEFAULT_CSS = `
   background: var(--tack-accent-soft);
   color: var(--tack-accent-strong);
 }
-/* Stars variant: grouped together visually. */
+/* Stars variant: classic borderless fill. Empty stars are muted, filled
+   stars take the accent color. Click semantics: clicking the Nth star
+   fills 1..N (cumulative) — see widget.ts click handler. */
 [data-tack-widget] [data-tack-rating-row][data-tack-rating-variant="stars"] {
-  gap: 2px;
+  gap: 0;
 }
 [data-tack-widget] [data-tack-rating-row][data-tack-rating-variant="stars"] [data-tack-rating-option] {
-  padding: 4px 6px;
+  background: transparent;
+  border: none;
+  color: var(--tack-border-strong);
+  padding: 4px 2px;
   font-size: var(--tack-text-lg);
+  min-width: var(--tack-tap-target);
+}
+[data-tack-widget] [data-tack-rating-row][data-tack-rating-variant="stars"] [data-tack-rating-option]:hover {
+  background: transparent;
+  color: var(--tack-accent);
+}
+[data-tack-widget] [data-tack-rating-row][data-tack-rating-variant="stars"] [data-tack-rating-option][aria-pressed="true"] {
+  background: transparent;
+  border: none;
+  color: var(--tack-accent);
 }
 [data-tack-widget][data-tack-state="error_retryable"] [data-tack-status],
 [data-tack-widget][data-tack-state="error_docs"] [data-tack-status],
