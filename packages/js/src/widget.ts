@@ -21,6 +21,7 @@
 // foundation of.
 
 import { TackError, docUrl } from './errors'
+import { applyFontSafety } from './font-safety'
 import { bindHotkey } from './hotkey'
 import { type BuiltinPresetName, resolvePreset } from './themes'
 import {
@@ -123,6 +124,79 @@ export interface TackWidgetConfig {
    * directly against the returned handle.
    */
   hotkey?: string
+  /**
+   * Launcher placement, when `trigger: 'auto'` mounts a launcher. Has no
+   * effect on the dialog itself — `<dialog>` lives in the top layer and is
+   * centered by the browser regardless. Accepts the legacy short forms
+   * `'br'` and `'bl'` with a one-shot deprecation warning per page load.
+   */
+  placement?:
+    | 'bottom-right'
+    | 'bottom-left'
+    | 'top-right'
+    | 'top-left'
+    | 'custom'
+    | 'br'
+    | 'bl'
+  /**
+   * `'auto'` reserves a slot for the SDK to mount a launcher button.
+   * `'none'` (current default) means the host owns its trigger and calls
+   * `handle.open()`. The `'auto'` path is wired through but is currently a
+   * no-op when invoked via `Tack.init` — use `TackLauncher.mount()` for the
+   * launcher today; this option exists so consumer code can adopt the final
+   * surface ahead of the auto-mount landing.
+   */
+  trigger?: 'auto' | 'none'
+  /**
+   * Stacking context for the dialog. Applied as inline `--tack-z-index`.
+   * Default keeps Tack above most third-party widgets (Intercom, Crisp, …).
+   */
+  zIndex?: number
+  /**
+   * `true` (default) opens via `dialog.showModal()` — top-layer rendering,
+   * focus trap, ESC dismissal, backdrop. `false` calls `dialog.show()` —
+   * non-modal, no focus trap, no backdrop. Opt out only when you really
+   * need a non-blocking surface; you give up the a11y guarantees the modal
+   * path provides.
+   */
+  modal?: boolean
+  /**
+   * Lock body scroll while the dialog is open. Default `true`. Skipped when
+   * `modal: false` (no backdrop = non-blocking surface, host scroll is
+   * intentionally available).
+   */
+  scrollLock?: boolean
+  /**
+   * Verbose lifecycle logging via `console.debug`. Off by default. When on,
+   * every FSM transition, capture attempt, and lifecycle boundary is
+   * namespaced as `[tack@<version>]` so it's filterable in devtools.
+   */
+  debug?: boolean
+  /**
+   * Custom fetch implementation passed to the transport. Useful for
+   * corporate proxies, tracing libraries, or test fakes. Defaults to
+   * `globalThis.fetch`.
+   */
+  fetch?: typeof fetch
+  /**
+   * Extra request headers merged into the submit POST. Cannot override
+   * `X-Tack-SDK-Version` — that one is locked last so the version stamp is
+   * always honest for server-side analytics.
+   */
+  headers?: Record<string, string>
+  /**
+   * Screenshot capture escape hatch.
+   *   - `false` disables capture entirely (no toggle in the UI, no module
+   *     load)
+   *   - a function overrides the default html-to-image path; called with
+   *     the capture target element (the host page body), should resolve to
+   *     a `data:image/...;base64,...` URL
+   *   - `undefined` (default) uses the lazy-loaded html-to-image path
+   *
+   * The default capture path is lazy-imported so the main bundle stays
+   * under its size cap.
+   */
+  captureScreenshot?: ((el: Element) => Promise<string>) | false
 }
 
 export interface TackHandle {
@@ -174,6 +248,8 @@ export interface TackHandle {
 type WidgetState =
   | 'idle'
   | 'composing'
+  | 'capturing'
+  | 'capture_failed'
   | 'submitting'
   | 'success'
   | 'error_retryable'
@@ -182,7 +258,13 @@ type WidgetState =
 
 const LEGAL_TRANSITIONS: Record<WidgetState, readonly WidgetState[]> = {
   idle: ['composing'],
-  composing: ['submitting', 'idle'],
+  composing: ['capturing', 'submitting', 'idle'],
+  // capturing is a brief substate around the html-to-image snapshot. Success
+  // continues into submitting (with the screenshot attached to the request);
+  // failure flips to capture_failed, which auto-continues into submitting
+  // without the screenshot. close()/destroy() can interrupt either path.
+  capturing: ['submitting', 'capture_failed', 'idle'],
+  capture_failed: ['submitting', 'composing', 'idle'],
   submitting: ['success', 'error_retryable', 'error_docs', 'network_error', 'idle'],
   success: ['idle'],
   error_retryable: ['submitting', 'composing', 'idle'],
@@ -192,6 +274,52 @@ const LEGAL_TRANSITIONS: Record<WidgetState, readonly WidgetState[]> = {
 
 /** ms to wait on `success` before auto-closing the dialog. Plan minimum: 1500. */
 const SUCCESS_AUTOCLOSE_MS = 1800
+
+/**
+ * Module-level "warned this page load already" set, keyed by the deprecation
+ * token. One-shot warnings prevent log spam when a host re-renders. Reset only
+ * across full page loads — that's the right granularity for "you should
+ * migrate" nudges.
+ */
+const _deprecationWarned: Set<string> = new Set()
+function warnDeprecatedOnce(key: string, message: string): void {
+  if (_deprecationWarned.has(key)) return
+  _deprecationWarned.add(key)
+  if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+    console.warn(`[tack] ${message}`)
+  }
+}
+
+/**
+ * Resolve `placement` accepting the legacy `'br'`/`'bl'` aliases. Each alias
+ * triggers a one-shot deprecation warning so consumers can migrate without
+ * being silently broken. Returns the canonical long form.
+ */
+function resolvePlacement(
+  placement: TackWidgetConfig['placement'] | undefined,
+):
+  | 'bottom-right'
+  | 'bottom-left'
+  | 'top-right'
+  | 'top-left'
+  | 'custom'
+  | undefined {
+  if (placement === 'br') {
+    warnDeprecatedOnce(
+      'placement-br',
+      "placement: 'br' is deprecated; use 'bottom-right'",
+    )
+    return 'bottom-right'
+  }
+  if (placement === 'bl') {
+    warnDeprecatedOnce(
+      'placement-bl',
+      "placement: 'bl' is deprecated; use 'bottom-left'",
+    )
+    return 'bottom-left'
+  }
+  return placement
+}
 
 /**
  * Map a TackError to the FSM error bucket. Server-side issues that a retry
@@ -233,6 +361,23 @@ interface InternalState {
    * "focus returns to trigger on close".
    */
   previousFocus: HTMLElement | null
+  /**
+   * Pre-lock value of `document.body.style.overflow`, captured when scroll
+   * lock kicks in on open(). `null` means we have not locked (so close()
+   * won't accidentally overwrite a host-set value). Restored on close()/
+   * destroy().
+   */
+  priorBodyOverflow: string | null
+  /** Screenshot toggle checkbox (S4). Null when capture is disabled. */
+  captureToggle: HTMLInputElement | null
+  /** Screenshot thumbnail preview (S4). Hidden until capture succeeds. */
+  capturePreview: HTMLImageElement | null
+  /**
+   * Sticky "skip capture this submit" flag set after capture_failed so a
+   * subsequent submit doesn't re-attempt the failing capture. Cleared on
+   * close() so a fresh open() starts clean.
+   */
+  skipCaptureOnce: boolean
 }
 
 /**
@@ -279,8 +424,27 @@ function init(config: TackWidgetConfig): TackHandle {
     }
   }
 
+  // Normalize placement up front so legacy aliases ('br'/'bl') warn at init
+  // time, not lazily on first open. Result is stashed back on the config so a
+  // future auto-launcher path reads the canonical value.
+  const normalizedConfig: TackWidgetConfig = {
+    ...config,
+    placement: resolvePlacement(config.placement),
+  }
+
+  // Debug logger. No-op when `debug` is off so the prod hot path stays free of
+  // the bound-function allocation. Tagged with the SDK version so devs can
+  // filter logs across multiple Tack versions on the same page.
+  const dlog: (...args: unknown[]) => void = config.debug
+    ? (...args) => {
+        if (typeof console !== 'undefined' && typeof console.debug === 'function') {
+          console.debug(`[tack@${SDK_VERSION}]`, ...args)
+        }
+      }
+    : () => {}
+
   const state: InternalState = {
-    config: { ...config, endpoint: config.endpoint ?? DEFAULT_ENDPOINT },
+    config: { ...normalizedConfig, endpoint: normalizedConfig.endpoint ?? DEFAULT_ENDPOINT },
     host: null,
     dialog: null,
     textarea: null,
@@ -293,6 +457,10 @@ function init(config: TackWidgetConfig): TackHandle {
     abort: null,
     destroyed: false,
     previousFocus: null,
+    priorBodyOverflow: null,
+    captureToggle: null,
+    capturePreview: null,
+    skipCaptureOnce: false,
   }
 
   function ensureMounted(): HTMLDialogElement {
@@ -303,9 +471,22 @@ function init(config: TackWidgetConfig): TackHandle {
     state.host = host
 
     if (state.config.injectStyles !== false) ensureStylesInShadow(shadow)
+    // Defense against host pages whose body font is a display/script/decorative
+    // family that's unreadable as paragraph text. Sniffs + glyph-probes the
+    // host body font; if either signal trips, sets an inline font-family on
+    // the host element to a safe system stack and warns ONCE per page load.
+    // Skipped when injectStyles: false (consumer fully owns styling).
+    applyFontSafety(host, { injectStyles: state.config.injectStyles })
 
     const dialog = document.createElement('dialog')
     dialog.setAttribute('data-tack-widget', '')
+
+    // zIndex override applied as inline custom property — stylesheet defaults
+    // to 2147483600 which beats most third-party widgets, but a host with a
+    // bigger sibling (some CMS overlays) needs to bump it explicitly.
+    if (typeof state.config.zIndex === 'number') {
+      dialog.style.setProperty('--tack-z-index', String(state.config.zIndex))
+    }
 
     // Theme presets (DESIGN.md "Theme Presets") drive scheme + tokens. The
     // legacy `theme` prop sets `data-tack-theme` for back-compat selectors.
@@ -381,6 +562,39 @@ function init(config: TackWidgetConfig): TackHandle {
     docLink.textContent = 'Read the docs'
     docLink.hidden = true
 
+    // Screenshot toggle row (S4). Skipped entirely when captureScreenshot is
+    // explicitly false — opted out, no toggle, no preview, no DOM cost.
+    const captureEnabled = state.config.captureScreenshot !== false
+    let captureRow: HTMLDivElement | null = null
+    let captureToggle: HTMLInputElement | null = null
+    let capturePreview: HTMLImageElement | null = null
+    if (captureEnabled) {
+      captureRow = document.createElement('div')
+      captureRow.setAttribute('data-tack-capture-row', '')
+
+      const captureLabel = document.createElement('label')
+      captureLabel.setAttribute('data-tack-capture-label', '')
+      captureToggle = document.createElement('input')
+      captureToggle.type = 'checkbox'
+      // Default UNCHECKED. Privacy-by-default: a user submitting feedback
+      // shouldn't accidentally include a screenshot of whatever's on screen
+      // (which may include other users' data, billing info, etc.). The toggle
+      // is visible and one click away — users who want to include the
+      // screenshot opt in. The README documents this default.
+      captureToggle.checked = false
+      captureToggle.setAttribute('data-tack-capture-toggle', '')
+      const captureLabelText = document.createElement('span')
+      captureLabelText.textContent = 'Include screenshot'
+      captureLabel.append(captureToggle, captureLabelText)
+
+      capturePreview = document.createElement('img')
+      capturePreview.setAttribute('data-tack-capture-preview', '')
+      capturePreview.alt = 'Screenshot preview'
+      capturePreview.hidden = true
+
+      captureRow.append(captureLabel, capturePreview)
+    }
+
     const actions = document.createElement('div')
     actions.setAttribute('data-tack-actions', '')
 
@@ -404,7 +618,11 @@ function init(config: TackWidgetConfig): TackHandle {
     submitBtn.setAttribute('data-tack-submit', '')
 
     actions.append(cancelBtn, retryBtn, submitBtn)
-    form.append(titleEl, textarea, statusEl, docLink, actions)
+    if (captureRow) {
+      form.append(titleEl, textarea, captureRow, statusEl, docLink, actions)
+    } else {
+      form.append(titleEl, textarea, statusEl, docLink, actions)
+    }
     dialog.append(form)
     shadow.append(dialog)
 
@@ -414,6 +632,8 @@ function init(config: TackWidgetConfig): TackHandle {
     state.statusEl = statusEl
     state.retryBtn = retryBtn
     state.docLink = docLink
+    state.captureToggle = captureToggle
+    state.capturePreview = capturePreview
 
     cancelBtn.addEventListener('click', () => close())
     retryBtn.addEventListener('click', () => {
@@ -428,6 +648,7 @@ function init(config: TackWidgetConfig): TackHandle {
     // "any keystroke or button click resets" transition.
     textarea.addEventListener('input', () => {
       if (state.fsm === 'error_docs') transitionTo('composing')
+      else if (state.fsm === 'capture_failed') transitionTo('composing')
     })
     form.addEventListener('submit', (event) => {
       event.preventDefault()
@@ -481,6 +702,7 @@ function init(config: TackWidgetConfig): TackHandle {
       }
       return
     }
+    dlog('fsm', state.fsm, '→', next)
 
     // Clear any pending success-auto-close when leaving the success state.
     if (state.fsm === 'success' && state.successTimer !== null) {
@@ -518,6 +740,23 @@ function init(config: TackWidgetConfig): TackHandle {
       case 'idle':
       case 'composing':
         // Default UI: input visible, submit enabled. Nothing extra to do.
+        break
+
+      case 'capturing':
+        // Capture is brief — disable submit so the user can't double-fire
+        // while we're snapshotting. No status text; the visibility toggle
+        // and rAF makes the gap nearly invisible.
+        submit.disabled = true
+        submit.textContent = 'Capturing…'
+        break
+
+      case 'capture_failed':
+        status.hidden = false
+        status.textContent = 'Screenshot unavailable — submit anyway.'
+        // Submit stays available — auto-continue happens, but if the
+        // sequencing is interrupted (close mid-flight), the visible state
+        // matches what handleSubmit will do next.
+        submit.disabled = false
         break
 
       case 'submitting':
@@ -589,6 +828,48 @@ function init(config: TackWidgetConfig): TackHandle {
     }
   }
 
+  /**
+   * Run the screenshot capture. Briefly hides the dialog (visibility, NOT
+   * display — preserve focus state and layout) so the snapshot doesn't
+   * include the modal itself, then restores visibility before resolving.
+   * Wrapped in requestAnimationFrame so the browser actually paints the
+   * hidden state before the capture runs (otherwise on fast machines we'd
+   * race and snapshot the dialog still painted).
+   *
+   * If the consumer provided `captureScreenshot: customFn`, that runs in
+   * place of the default html-to-image path. The customFn never triggers
+   * the dynamic html-to-image import, so consumers can opt out of the lazy
+   * dep entirely.
+   */
+  async function runCapture(): Promise<string> {
+    const customFn = state.config.captureScreenshot
+    const target = document.body
+    const dialog = state.dialog
+    const priorVisibility = dialog?.style.visibility ?? ''
+    if (dialog) dialog.style.visibility = 'hidden'
+    try {
+      // Wait one paint so the visibility flip lands before the capture.
+      await new Promise<void>((resolve) => {
+        if (typeof requestAnimationFrame === 'function') {
+          requestAnimationFrame(() => resolve())
+        } else {
+          // Test envs without rAF (some jsdom configs) fall through to a
+          // microtask — close enough for a smoke test.
+          setTimeout(resolve, 0)
+        }
+      })
+      if (typeof customFn === 'function') {
+        return await customFn(target)
+      }
+      // Lazy-load the default capture path. Keeps html-to-image out of the
+      // main bundle's static import closure (verified by bundle.test.ts).
+      const { capture } = await import('./capture')
+      return await capture(target)
+    } finally {
+      if (dialog) dialog.style.visibility = priorVisibility
+    }
+  }
+
   async function handleSubmit(): Promise<void> {
     if (state.destroyed || !state.textarea || !state.submitBtn) return
     // Block re-entry while a request is in flight. The FSM gates this; the
@@ -612,6 +893,45 @@ function init(config: TackWidgetConfig): TackHandle {
       return
     }
 
+    // Screenshot capture (S4). Runs before submit — successful capture is
+    // attached to the request body; failure transitions through
+    // capture_failed and continues to submitting without the screenshot.
+    // skipCaptureOnce prevents re-attempting a known-broken capture on retry.
+    let screenshot: string | undefined
+    const wantsCapture =
+      state.config.captureScreenshot !== false &&
+      !!state.captureToggle?.checked &&
+      !state.skipCaptureOnce
+    if (wantsCapture) {
+      transitionTo('capturing')
+      try {
+        screenshot = await runCapture()
+        if (state.destroyed) return
+        if (screenshot && state.capturePreview) {
+          state.capturePreview.src = screenshot
+          state.capturePreview.hidden = false
+        }
+      } catch (err) {
+        if (state.destroyed) return
+        state.skipCaptureOnce = true
+        transitionTo('capture_failed')
+        // Soft error — only surface when debug is on. Submit proceeds.
+        if (state.config.debug) {
+          dlog('capture failed:', err)
+          state.config.onError?.(
+            new TackError(
+              {
+                type: 'internal_error',
+                message: 'screenshot_unavailable',
+                doc_url: docUrl('internal_error'),
+              },
+              null,
+            ),
+          )
+        }
+      }
+    }
+
     transitionTo('submitting')
     state.abort = new AbortController()
     const abortSignal = state.abort.signal
@@ -620,6 +940,7 @@ function init(config: TackWidgetConfig): TackHandle {
     const req: TackSubmitRequest = {
       projectId: state.config.projectId,
       body,
+      screenshot,
       url: defaults.url,
       userAgent: defaults.userAgent,
       viewport: defaults.viewport,
@@ -632,6 +953,8 @@ function init(config: TackWidgetConfig): TackHandle {
         endpoint: state.config.endpoint,
         body: req,
         signal: abortSignal,
+        fetch: state.config.fetch,
+        headers: state.config.headers,
       })
       // Suppress side effects if the widget was destroyed or the request
       // was cancelled while in flight — the user is no longer there to see
@@ -677,7 +1000,21 @@ function init(config: TackWidgetConfig): TackHandle {
       const active =
         typeof document !== 'undefined' ? document.activeElement : null
       state.previousFocus = active instanceof HTMLElement ? active : null
-      dialog.showModal()
+      // modal: false uses dialog.show() — non-modal, no focus trap, no
+      // backdrop, no top-layer escape. Caller has explicitly opted out of
+      // the a11y guarantees showModal provides.
+      const useModal = state.config.modal !== false
+      dlog('open', { modal: useModal })
+      if (useModal) dialog.showModal()
+      else dialog.show()
+      // Body scroll lock — default on, only meaningful when modal (non-modal
+      // surfaces are expected to leave the host scrollable). Stash the prior
+      // overflow value so close() can restore it cleanly even if some other
+      // code touched it in the meantime; documented as best-effort.
+      if (useModal && state.config.scrollLock !== false) {
+        state.priorBodyOverflow = document.body.style.overflow
+        document.body.style.overflow = 'hidden'
+      }
       // Reset to composing on every open. Reopening after a previous error
       // or success should land the user back in the input, not show stale
       // status messages from the prior session.
@@ -691,9 +1028,22 @@ function init(config: TackWidgetConfig): TackHandle {
     if (state.destroyed) return
     state.abort?.abort()
     if (state.dialog?.open) state.dialog.close()
+    // Restore body overflow if we locked it. Skip if our stashed value is
+    // null (we never locked) so we don't accidentally clear a host-set value.
+    if (state.priorBodyOverflow !== null) {
+      document.body.style.overflow = state.priorBodyOverflow
+      state.priorBodyOverflow = null
+    }
+    dlog('close')
     // Reset FSM after closing so a subsequent open() starts clean. Skip if
     // we're already idle (e.g. close() called before open() ever fired).
     if (state.fsm !== 'idle') transitionTo('idle')
+    // Fresh open() should re-attempt capture even if a prior submit failed.
+    state.skipCaptureOnce = false
+    if (state.capturePreview) {
+      state.capturePreview.hidden = true
+      state.capturePreview.removeAttribute('src')
+    }
     // Restore focus to whatever element invoked the dialog (typically the
     // host's launcher button). Skip if the element was removed from the DOM
     // since open() — focus a removed node throws on some engines.
@@ -731,6 +1081,14 @@ function init(config: TackWidgetConfig): TackHandle {
     if (state.destroyed) return
     state.destroyed = true
     state.abort?.abort()
+    // Defensive: if destroy() runs while the dialog is still open (host tore
+    // the component down without close()), the scroll lock would otherwise
+    // outlive the dialog and freeze the page.
+    if (state.priorBodyOverflow !== null) {
+      document.body.style.overflow = state.priorBodyOverflow
+      state.priorBodyOverflow = null
+    }
+    dlog('destroy')
     if (state.successTimer !== null) {
       clearTimeout(state.successTimer)
       state.successTimer = null
@@ -986,6 +1344,32 @@ const TACK_DEFAULT_CSS = `
   justify-content: flex-end;
   gap: var(--tack-space-sm);
 }
+/* Screenshot capture row (S4). Compact toggle + thumbnail preview. */
+[data-tack-widget] [data-tack-capture-row] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tack-space-sm);
+}
+[data-tack-widget] [data-tack-capture-label] {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--tack-space-sm);
+  font-size: var(--tack-text-sm);
+  color: var(--tack-fg-muted);
+  cursor: pointer;
+  user-select: none;
+}
+[data-tack-widget] [data-tack-capture-toggle] {
+  accent-color: var(--tack-accent);
+  cursor: pointer;
+}
+[data-tack-widget] [data-tack-capture-preview] {
+  max-width: 100%;
+  max-height: 120px;
+  border: 1px solid var(--tack-border);
+  border-radius: var(--tack-radius-sm);
+  object-fit: cover;
+}
 [data-tack-widget] button {
   font: inherit;
   font-weight: 500;
@@ -1057,6 +1441,7 @@ const TACK_DEFAULT_CSS = `
  */
 [data-tack-widget][data-tack-state="success"] [data-tack-title],
 [data-tack-widget][data-tack-state="success"] [data-tack-input],
+[data-tack-widget][data-tack-state="success"] [data-tack-capture-row],
 [data-tack-widget][data-tack-state="success"] [data-tack-actions] {
   display: none;
 }
@@ -1192,6 +1577,79 @@ const TACK_DEFAULT_CSS = `
   to {
     transform: translateY(0);
     opacity: 1;
+  }
+}
+
+/*
+ * OKLCH @supports fallback. Defends Safari 15.4-16.3 + older Chrome/Firefox
+ * (~2% of 2026 traffic) where oklch() and color-mix(in oklch, ...) parse as
+ * invalid declarations and the entire property is dropped. Inside this block
+ * we re-set every token that uses oklch() to a hex equivalent so the dialog
+ * still renders. Modern browsers ignore the block entirely (their @supports
+ * test passes), so there's zero cost on the modern path.
+ */
+@supports not (color: oklch(0 0 0)) {
+  [data-tack-widget] {
+    --tack-bg: #f9f9f7;
+    --tack-surface: #ffffff;
+    --tack-surface-elevated: #ffffff;
+    --tack-surface-overlay: rgba(0, 0, 0, 0.4);
+    --tack-fg: #2c2b29;
+    --tack-fg-muted: #717069;
+    --tack-fg-subtle: #9a988f;
+    --tack-fg-on-accent: #ffffff;
+    --tack-border: #e5e3dc;
+    --tack-border-strong: #c8c5bc;
+    --tack-border-focus: #2f9b5c;
+    --tack-accent: #2f9b5c;
+    --tack-accent-strong: #228048;
+    --tack-accent-soft: rgba(47, 155, 92, 0.16);
+    --tack-success: #2f9b5c;
+    --tack-warning: #d49a2a;
+    --tack-error: #c93b2f;
+    --tack-info: #2f7fb8;
+    --tack-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+    --tack-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.06);
+    --tack-shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.08);
+  }
+  [data-tack-widget][data-tack-scheme="dark"],
+  [data-tack-widget][data-tack-theme="dark"] {
+    --tack-bg: #1c1b19;
+    --tack-surface: #25241f;
+    --tack-surface-elevated: #2c2b25;
+    --tack-surface-overlay: rgba(0, 0, 0, 0.5);
+    --tack-fg: #f3f2ee;
+    --tack-fg-muted: #aeada6;
+    --tack-fg-subtle: #6e6c66;
+    --tack-border: #3a3934;
+    --tack-border-strong: #524f48;
+    --tack-accent: #50c47e;
+    --tack-accent-strong: #6fd996;
+    --tack-accent-soft: rgba(80, 196, 126, 0.18);
+    --tack-fg-on-accent: #1c1b19;
+    --tack-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --tack-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+    --tack-shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.18);
+  }
+  @media (prefers-color-scheme: dark) {
+    [data-tack-widget]:not([data-tack-scheme]):not([data-tack-theme="light"]):not([data-tack-theme="dark"]) {
+      --tack-bg: #1c1b19;
+      --tack-surface: #25241f;
+      --tack-surface-elevated: #2c2b25;
+      --tack-surface-overlay: rgba(0, 0, 0, 0.5);
+      --tack-fg: #f3f2ee;
+      --tack-fg-muted: #aeada6;
+      --tack-fg-subtle: #6e6c66;
+      --tack-border: #3a3934;
+      --tack-border-strong: #524f48;
+      --tack-accent: #50c47e;
+      --tack-accent-strong: #6fd996;
+      --tack-accent-soft: rgba(80, 196, 126, 0.18);
+      --tack-fg-on-accent: #1c1b19;
+      --tack-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+      --tack-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+      --tack-shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.18);
+    }
   }
 }
 

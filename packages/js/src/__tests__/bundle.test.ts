@@ -124,6 +124,47 @@ describe('bundle: headless tree-shake contract', () => {
   }
 })
 
+describe('bundle: html-to-image lazy load', () => {
+  // S4 promise: the screenshot capture path is lazy-loaded so the main bundle
+  // doesn't carry the ~25 KB cost of html-to-image. We verify both shapes:
+  //   1. Source code of html-to-image (signature strings) does not appear in
+  //      the main bundle's static import closure.
+  //   2. Reference to "html-to-image" appears only inside a dynamic import()
+  //      (or as a comment) — not as `from "html-to-image"` or
+  //      `require("html-to-image")` at top level.
+  // Drift here means either the dep got bundled in or the dynamic-import was
+  // accidentally rewritten to a static one — either way the size budget falls
+  // over.
+  for (const name of ['index.mjs', 'index.js']) {
+    it(`${name} does not statically import html-to-image`, () => {
+      const file = resolve(DIST, name)
+      expect(existsSync(file)).toBe(true)
+      const src = readFileSync(file, 'utf8')
+      // Forbidden static-import shapes
+      expect(src).not.toMatch(/from\s*["']html-to-image["']/)
+      expect(src).not.toMatch(/require\(\s*["']html-to-image["']\s*\)/)
+      // It's fine — and expected — that the string appears inside a dynamic
+      // `import("html-to-image")` call. Sanity-check that case by allowing
+      // it but ensuring the string is wrapped in `import(...)` if present.
+      const matches = src.match(/html-to-image/g) ?? []
+      for (const m of matches) {
+        // Each occurrence must be (a) inside a comment line, or (b) inside
+        // an `import("...")` dynamic call. Anything else means it leaked.
+        const idx = src.indexOf(m)
+        const lineStart = src.lastIndexOf('\n', idx) + 1
+        const lineEnd = src.indexOf('\n', idx)
+        const line = src.slice(lineStart, lineEnd === -1 ? undefined : lineEnd)
+        const isComment = line.trim().startsWith('//') || line.trim().startsWith('*')
+        const isDynamic = /import\s*\(\s*["']html-to-image["']/.test(line)
+        expect(
+          isComment || isDynamic,
+          `Static reference to html-to-image at ${name}: ${line}`,
+        ).toBe(true)
+      }
+    })
+  }
+})
+
 describe('bundle: main chunk size', () => {
   it('index.mjs gzip size under cap', () => {
     const indexMjs = resolve(DIST, 'index.mjs')

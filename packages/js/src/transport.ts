@@ -23,6 +23,18 @@ export interface PostFeedbackOptions {
    * that want to assert timeout behavior without waiting 30 seconds.
    */
   timeoutMs?: number
+  /**
+   * Custom fetch implementation. Defaults to `globalThis.fetch`. Use for
+   * corporate proxies, tracing libraries, or test fakes that need to wrap
+   * the network call.
+   */
+  fetch?: typeof fetch
+  /**
+   * Extra request headers, merged after the SDK's defaults. Cannot override
+   * `X-Tack-SDK-Version` (rewritten last so the version stamp is reliable
+   * for server-side analytics and bug reports).
+   */
+  headers?: Record<string, string>
 }
 
 /**
@@ -36,11 +48,16 @@ export const REQUEST_TIMEOUT_MS = 30_000
 export async function postFeedback(
   opts: PostFeedbackOptions,
 ): Promise<TackFeedbackCreated> {
+  // User headers come first so SDK defaults (Content-Type, Idempotency-Key,
+  // X-Tack-SDK-Version) overwrite any user attempt to set them — the version
+  // stamp must be honest for server-side analytics.
   const headers: Record<string, string> = {
+    ...(opts.headers ?? {}),
     'Content-Type': 'application/json',
     'Idempotency-Key': opts.idempotencyKey ?? cryptoRandomId(),
     'X-Tack-SDK-Version': SDK_VERSION,
   }
+  const doFetch = opts.fetch ?? globalThis.fetch
 
   // Compose the caller's signal with a timeout. Manual coordination instead
   // of `AbortSignal.any` so we don't depend on a 2024-baseline API. Tracks
@@ -68,7 +85,7 @@ export async function postFeedback(
   let res: Response
   let text: string
   try {
-    res = await fetch(`${opts.endpoint}/api/v1/feedback`, {
+    res = await doFetch(`${opts.endpoint}/api/v1/feedback`, {
       method: 'POST',
       headers,
       body: JSON.stringify(opts.body),
