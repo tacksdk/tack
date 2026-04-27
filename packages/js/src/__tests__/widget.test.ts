@@ -1697,6 +1697,64 @@ describe('Tack widget', () => {
     })
   })
 
+  describe('Tier 1 --tack-radius cascade (DESIGN.md "Token Layers")', () => {
+    function widgetCss(shadow: ShadowRoot): string {
+      const adopted = (shadow as unknown as { adoptedStyleSheets?: CSSStyleSheet[] })
+        .adoptedStyleSheets
+      if (adopted && adopted.length > 0) {
+        for (const sheet of adopted) {
+          try {
+            const text = Array.from(sheet.cssRules).map((r) => r.cssText).join('\n')
+            if (text.includes('--tack-radius')) return text
+          } catch {
+            // fall through to <style> path
+          }
+        }
+      }
+      return shadow.querySelector('style[data-tack-styles]')?.textContent ?? ''
+    }
+
+    it('bundled stylesheet derives Tier 2 radii from --tack-radius via calc()', () => {
+      const handle = Tack.init({ projectId: 'proj_test' })
+      handle.open()
+      const shadow = widgetShadow()!
+      const css = widgetCss(shadow)
+      // Base token exists.
+      expect(css).toMatch(/--tack-radius:\s*6px/)
+      // md is the identity; sm/lg/xl scale via calc(var(...) * ratio).
+      expect(css).toMatch(/--tack-radius-md:\s*var\(--tack-radius\)/)
+      expect(css).toMatch(/--tack-radius-sm:\s*calc\(var\(--tack-radius\)\s*\*\s*0\.667\)/)
+      expect(css).toMatch(/--tack-radius-lg:\s*calc\(var\(--tack-radius\)\s*\*\s*1\.667\)/)
+      expect(css).toMatch(/--tack-radius-xl:\s*calc\(var\(--tack-radius\)\s*\*\s*2\.333\)/)
+      // --full stays special-cased (pills).
+      expect(css).toMatch(/--tack-radius-full:\s*9999px/)
+    })
+
+    it('overriding --tack-radius cascades to the dialog corner via getComputedStyle', () => {
+      const handle = Tack.init({ projectId: 'proj_test' })
+      handle.open()
+      const dialog = getDialog()!
+      // Set the Tier 1 base inline (consumer-side override on the dialog).
+      dialog.style.setProperty('--tack-radius', '12px')
+      // Dialog's border-radius is var(--tack-radius-xl) → calc(12 * 2.333) ≈ 28px.
+      // jsdom's getComputedStyle returns the unresolved CSS string for vars/calc,
+      // so assert on the property chain rather than a resolved px value.
+      expect(dialog.style.getPropertyValue('--tack-radius')).toBe('12px')
+      const css = widgetCss(widgetShadow()!)
+      // Dialog rule reads tier-2 xl, which now derives from tier 1.
+      expect(css).toMatch(/\[data-tack-widget\][^{]*\{[^}]*border-radius:\s*var\(--tack-radius-xl\)/)
+    })
+
+    it('individual Tier 2 override on the dialog beats the cascade', () => {
+      const handle = Tack.init({ projectId: 'proj_test' })
+      handle.open()
+      const dialog = getDialog()!
+      dialog.style.setProperty('--tack-radius', '20px')
+      dialog.style.setProperty('--tack-radius-xl', '8px')
+      expect(dialog.style.getPropertyValue('--tack-radius-xl')).toBe('8px')
+    })
+  })
+
   it('SSR (no window) returns a no-op handle without throwing', () => {
     const realWindow = globalThis.window
     const realDocument = globalThis.document

@@ -242,4 +242,48 @@ describe('TackLauncher', () => {
     expect(sent.user).toEqual({ id: 'u_42' })
     handle.destroy()
   })
+
+  describe('preset accent flows to launcher', () => {
+    it('default preset → no inline launcher tokens, CSS default (Tack green) applies', () => {
+      // The 'default' preset ships an empty tokens object (scheme 'auto'
+      // defers color to the bundled stylesheet's prefers-color-scheme rule).
+      // So the launcher gets no inline accent override — the CSS default
+      // (Tack green via the var() fallback) is what paints.
+      const handle = TackLauncher.mount({ projectId: 'proj_test' })
+      const button = document.querySelector<HTMLButtonElement>('[data-tack-launcher]')!
+      expect(button.style.getPropertyValue('--tack-launcher-accent')).toBe('')
+      expect(button.style.getPropertyValue('--tack-launcher-fg')).toBe('')
+      handle.destroy()
+    })
+
+    it('midnight preset → launcher inline tokens use midnight violet', () => {
+      const handle = TackLauncher.mount({ projectId: 'proj_test', preset: 'midnight' })
+      const button = document.querySelector<HTMLButtonElement>('[data-tack-launcher]')!
+      // Midnight accent hue is 290 (violet); green default is 145.
+      expect(button.style.getPropertyValue('--tack-launcher-accent')).toContain('290')
+      expect(button.style.getPropertyValue('--tack-launcher-accent-strong')).toContain('290')
+      expect(button.style.getPropertyValue('--tack-launcher-accent-soft')).toContain('290')
+      handle.destroy()
+    })
+
+    it('custom preset object → launcher mirrors the supplied accent', () => {
+      const handle = TackLauncher.mount({
+        projectId: 'proj_test',
+        preset: {
+          name: 'custom',
+          scheme: 'light',
+          tokens: {
+            '--tack-accent': 'oklch(0.5 0.3 30)',
+            '--tack-accent-strong': 'oklch(0.6 0.3 30)',
+            '--tack-accent-soft': 'oklch(0.5 0.3 30 / 0.2)',
+            '--tack-fg-on-accent': 'oklch(1 0 0)',
+          },
+        },
+      })
+      const button = document.querySelector<HTMLButtonElement>('[data-tack-launcher]')!
+      expect(button.style.getPropertyValue('--tack-launcher-accent')).toBe('oklch(0.5 0.3 30)')
+      expect(button.style.getPropertyValue('--tack-launcher-fg')).toBe('oklch(1 0 0)')
+      handle.destroy()
+    })
+  })
 })
