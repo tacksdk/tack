@@ -41,6 +41,9 @@
     "in-app"
   ],
   "sideEffects": false,
+  "dependencies": {
+    "html-to-image": "^1.11.13"
+  },
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",

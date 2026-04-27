@@ -75,7 +75,7 @@ The `/headless` subpath does NOT include the widget — bundlers tree-shake the 
 | `debug` | `boolean` | `false` | Verbose `console.debug` lifecycle logs. |
 | `fetch` | `typeof fetch` | `globalThis.fetch` | Inject a custom fetch (for proxies, tracing). |
 | `headers` | `Record<string, string>` | | Extra request headers (cannot override `X-Tack-SDK-Version`). |
-| `captureScreenshot` | `false \| ((el: Element) => Promise<string>)` | enabled (lazy) | `false` disables screenshots; a function overrides the default html-to-image path. |
+| `captureScreenshot` | `false \| ((el: Element) => Promise<string>)` | enabled (toggle, default unchecked) | Renders an "Include screenshot" checkbox in the dialog (unchecked by default — privacy). `false` removes the toggle entirely; a function overrides the default html-to-image path. The capture module is lazy-loaded only when the user opts in. |
 | `onSubmit` | `(result) => void` | | Called after a successful submit. |
 | `onError` | `(err: TackError) => void` | | Called on submit failure. |
 | `onOpen` | `() => void` | | Called when the dialog opens. |
