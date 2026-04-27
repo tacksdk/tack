@@ -1,0 +1,367 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tack — Widget Playground</title>
+    <style>
+      :root {
+        --bg: #fafafa;
+        --surface: #fff;
+        --fg: #18181b;
+        --fg-muted: #71717a;
+        --border: #e4e4e7;
+        --accent: oklch(0.62 0.19 145);
+        --radius: 8px;
+        --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+          "Liberation Mono", monospace;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #0c0c0d;
+          --surface: #18181b;
+          --fg: #fafafa;
+          --fg-muted: #a1a1aa;
+          --border: #27272a;
+        }
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0;
+        padding: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI",
+          Roboto, "Helvetica Neue", Arial, sans-serif;
+        font-size: 15px;
+        line-height: 1.5;
+        color: var(--fg);
+        background: var(--bg);
+        min-height: 100vh;
+      }
+      header {
+        border-bottom: 1px solid var(--border);
+        padding: 16px 24px;
+      }
+      h1 {
+        font-size: 18px;
+        font-weight: 600;
+        margin: 0 0 4px;
+        letter-spacing: -0.01em;
+      }
+      header p {
+        font-size: 13px;
+        color: var(--fg-muted);
+        margin: 0;
+      }
+      header p code {
+        font-family: var(--font-mono);
+        font-size: 12px;
+      }
+      main {
+        display: grid;
+        grid-template-columns: 1fr 360px;
+        gap: 0;
+        min-height: calc(100vh - 65px);
+      }
+      @media (max-width: 800px) {
+        main { grid-template-columns: 1fr; }
+      }
+      #preview {
+        position: relative;
+        padding: 32px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        overflow: auto;
+      }
+      #preview h2 {
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--fg-muted);
+        margin: 0;
+        font-weight: 500;
+      }
+      .preview-card {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 24px;
+      }
+      .preview-card p {
+        color: var(--fg-muted);
+        font-size: 13px;
+        margin: 8px 0 0;
+      }
+      .preview-card button.demo-trigger {
+        background: var(--accent);
+        color: white;
+        border: 0;
+        padding: 10px 16px;
+        font-size: 14px;
+        font-weight: 500;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .preview-card button.demo-trigger:hover { filter: brightness(1.05); }
+      .lorem {
+        max-width: 60ch;
+        color: var(--fg-muted);
+        font-size: 14px;
+      }
+      aside {
+        border-left: 1px solid var(--border);
+        background: var(--surface);
+        padding: 24px;
+        overflow: auto;
+      }
+      aside h2 {
+        font-size: 14px;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+        color: var(--fg-muted);
+        margin: 0 0 16px;
+        font-weight: 500;
+      }
+      .control {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        margin-bottom: 14px;
+      }
+      .control label {
+        font-size: 12px;
+        font-weight: 500;
+        color: var(--fg-muted);
+      }
+      .control input[type="text"],
+      .control select,
+      .control input[type="color"] {
+        width: 100%;
+        padding: 8px 10px;
+        font: inherit;
+        font-size: 14px;
+        color: var(--fg);
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+      }
+      .control input[type="color"] { padding: 2px; height: 36px; }
+      .control input[type="range"] { width: 100%; }
+      .row {
+        display: grid;
+        grid-template-columns: 1fr 60px;
+        gap: 8px;
+        align-items: center;
+      }
+      .value {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        color: var(--fg-muted);
+        text-align: right;
+      }
+      .actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        margin-top: 24px;
+      }
+      .actions button {
+        padding: 9px;
+        font: inherit;
+        font-weight: 500;
+        font-size: 13px;
+        background: var(--bg);
+        color: var(--fg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .actions button.primary {
+        background: var(--accent);
+        color: white;
+        border-color: transparent;
+      }
+      .actions button.primary:hover { filter: brightness(1.05); }
+      .actions button:hover:not(.primary) { background: var(--border); }
+      .divider {
+        height: 1px;
+        background: var(--border);
+        margin: 20px 0;
+      }
+      details {
+        font-size: 12px;
+        color: var(--fg-muted);
+        margin-top: 16px;
+      }
+      details summary {
+        cursor: pointer;
+        margin-bottom: 8px;
+      }
+      details pre {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        background: var(--bg);
+        padding: 12px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        overflow-x: auto;
+        margin: 0;
+      }
+      .submit-log {
+        font-family: var(--font-mono);
+        font-size: 12px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 10px;
+        max-height: 120px;
+        overflow-y: auto;
+        white-space: pre-wrap;
+      }
+      .submit-log:empty::before {
+        content: "(submissions logged here)";
+        color: var(--fg-muted);
+        font-style: italic;
+      }
+      .error-mode {
+        font-size: 12px;
+        color: var(--fg-muted);
+        margin-top: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Tack — Widget Playground</h1>
+      <p>
+        Configure a theme on the right, click <code>Open dialog</code> to see
+        the widget. Submit goes to a fake endpoint that returns the response
+        you choose below.
+      </p>
+    </header>
+
+    <main>
+      <section id="preview">
+        <h2>Preview</h2>
+
+        <div class="preview-card">
+          <button class="demo-trigger" type="button" id="open-dialog">
+            Open dialog
+          </button>
+          <p>
+            This button is your "trigger." When the dialog closes, focus
+            returns here. Try keyboard nav: <kbd>Tab</kbd> →
+            <kbd>Enter</kbd>, then <kbd>Esc</kbd>.
+          </p>
+        </div>
+
+        <div class="preview-card">
+          <p style="margin-top:0">
+            Submission log (last 10):
+          </p>
+          <div class="submit-log" id="submit-log"></div>
+        </div>
+
+        <p class="lorem">
+          The widget mounts inside a closed shadow root, so the host page's
+          CSS (this very page) cannot affect the dialog's styling. Resize
+          your browser below 640px to see the mobile bottom-sheet variant.
+        </p>
+      </section>
+
+      <aside>
+        <h2>Configuration</h2>
+
+        <div class="control">
+          <label for="preset">Theme preset</label>
+          <select id="preset">
+            <option value="default" selected>default — Tack green, auto</option>
+            <option value="midnight">midnight — electric violet, dark</option>
+            <option value="paper">paper — warm rust, light</option>
+          </select>
+        </div>
+
+        <div class="control">
+          <label for="theme">Color scheme override</label>
+          <select id="theme">
+            <option value="auto" selected>auto (follow OS / preset scheme)</option>
+            <option value="light">light</option>
+            <option value="dark">dark</option>
+          </select>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="control">
+          <label for="title">Title</label>
+          <input type="text" id="title" value="Send feedback" />
+        </div>
+
+        <div class="control">
+          <label for="placeholder">Textarea placeholder</label>
+          <input type="text" id="placeholder" value="What can we improve?" />
+        </div>
+
+        <div class="control">
+          <label for="submit-label">Submit label</label>
+          <input type="text" id="submit-label" value="Send" />
+        </div>
+
+        <div class="control">
+          <label for="cancel-label">Cancel label</label>
+          <input type="text" id="cancel-label" value="Cancel" />
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="control">
+          <label for="accent">Accent color override</label>
+          <div class="row">
+            <input type="color" id="accent" value="" />
+            <span class="value" id="accent-value">(preset)</span>
+          </div>
+        </div>
+
+        <div class="control">
+          <label for="radius">Dialog radius</label>
+          <div class="row">
+            <input type="range" id="radius" min="0" max="32" value="14" />
+            <span class="value" id="radius-value">14px</span>
+          </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="control">
+          <label for="response">Server response (when you submit)</label>
+          <select id="response">
+            <option value="success" selected>200 — success</option>
+            <option value="rate_limited">429 — rate_limited (retry)</option>
+            <option value="internal_error">500 — internal_error (retry)</option>
+            <option value="invalid_request">400 — invalid_request (doc link)</option>
+            <option value="unauthorized">401 — unauthorized (doc link)</option>
+            <option value="payload_too_large">413 — payload_too_large (doc link)</option>
+            <option value="network_error">network failure (offline)</option>
+          </select>
+          <p class="error-mode">
+            The fake endpoint will return this. Test the FSM error states.
+          </p>
+        </div>
+
+        <div class="actions">
+          <button type="button" id="reset">Reset to defaults</button>
+          <button type="button" class="primary" id="open-dialog-2">
+            Open dialog
+          </button>
+        </div>
+
+        <details>
+          <summary>Generated config</summary>
+          <pre id="config-out"></pre>
+        </details>
+      </aside>
+    </main>
+
+    <script type="module" src="./playground.js"></script>
+  </body>
+</html>
