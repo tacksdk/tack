@@ -6,6 +6,7 @@
 
 import { Tack } from './widget'
 import type { TackHandle, TackWidgetConfig } from './widget'
+import { resolvePreset } from './themes'
 
 export type TackLauncherPosition =
   | 'bottom-right'
@@ -115,6 +116,27 @@ function mountLauncher(config: TackLauncherConfig): TackLauncherHandle {
   }
   if (config.launcherClassName) button.className = config.launcherClassName
   button.style.setProperty('--tack-launcher-offset', `${offset}px`)
+
+  // Mirror the preset's accent onto the launcher so the floating button
+  // tracks the dialog's color (DESIGN.md "Theme Presets"). The launcher
+  // lives outside [data-tack-widget], so it can't inherit those tokens via
+  // CSS — wire them inline instead. Per-launcher overrides via
+  // `launcherClassName` still win since inline-style specificity is below
+  // a !important class rule but above the bundled defaults.
+  const preset = resolvePreset(config.preset ?? 'default')
+  if (preset) {
+    const accent = preset.tokens['--tack-accent']
+    const accentStrong = preset.tokens['--tack-accent-strong']
+    const accentSoft = preset.tokens['--tack-accent-soft']
+    const fgOnAccent = preset.tokens['--tack-fg-on-accent']
+    if (accent) button.style.setProperty('--tack-launcher-accent', accent)
+    if (accentStrong)
+      button.style.setProperty('--tack-launcher-accent-strong', accentStrong)
+    if (accentSoft)
+      button.style.setProperty('--tack-launcher-accent-soft', accentSoft)
+    if (fgOnAccent) button.style.setProperty('--tack-launcher-fg', fgOnAccent)
+  }
+
   button.setAttribute('aria-label', label)
   button.setAttribute('aria-expanded', 'false')
   button.setAttribute('aria-haspopup', 'dialog')
@@ -185,10 +207,14 @@ function ensureLauncherStylesInjected(): void {
 const TACK_LAUNCHER_CSS = `
 [data-tack-launcher] {
   --tack-launcher-offset: 24px;
-  --tack-launcher-accent: oklch(0.62 0.19 145);
-  --tack-launcher-accent-strong: oklch(0.55 0.21 145);
-  --tack-launcher-accent-soft: oklch(0.62 0.19 145 / 0.35);
-  --tack-launcher-fg: oklch(0.99 0 0);
+  /* Fall back through the widget's accent tokens so consumers who set
+     --tack-accent at :root / body level get launcher tracking for free.
+     Preset-driven launchers also receive inline overrides from mountLauncher
+     (the launcher lives outside [data-tack-widget] and can't inherit). */
+  --tack-launcher-accent: var(--tack-accent, oklch(0.62 0.19 145));
+  --tack-launcher-accent-strong: var(--tack-accent-strong, oklch(0.55 0.21 145));
+  --tack-launcher-accent-soft: var(--tack-accent-soft, oklch(0.62 0.19 145 / 0.35));
+  --tack-launcher-fg: var(--tack-fg-on-accent, oklch(0.99 0 0));
   --tack-launcher-shadow-md: 0 4px 16px oklch(0 0 0 / 0.18), 0 1px 2px oklch(0 0 0 / 0.08);
   --tack-launcher-shadow-lg: 0 12px 32px oklch(0 0 0 / 0.22), 0 4px 12px oklch(0 0 0 / 0.10);
   --tack-launcher-z: 2147483000;

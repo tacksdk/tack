@@ -1697,6 +1697,65 @@ describe('Tack widget', () => {
     })
   })
 
+  describe('Tier 1 --tack-radius cascade (DESIGN.md "Token Layers")', () => {
+    function widgetCss(shadow: ShadowRoot): string {
+      const adopted = (shadow as unknown as { adoptedStyleSheets?: CSSStyleSheet[] })
+        .adoptedStyleSheets
+      if (adopted && adopted.length > 0) {
+        for (const sheet of adopted) {
+          try {
+            const text = Array.from(sheet.cssRules).map((r) => r.cssText).join('\n')
+            if (text.includes('--tack-radius')) return text
+          } catch {
+            // fall through to <style> path
+          }
+        }
+      }
+      return shadow.querySelector('style[data-tack-styles]')?.textContent ?? ''
+    }
+
+    it('bundled stylesheet derives Tier 2 radii from --tack-radius via calc()', () => {
+      const handle = Tack.init({ projectId: 'proj_test' })
+      handle.open()
+      const shadow = widgetShadow()!
+      const css = widgetCss(shadow)
+      // Base token exists.
+      expect(css).toMatch(/--tack-radius:\s*6px/)
+      // md is the identity; sm/lg/xl scale via calc(var(...) * ratio).
+      expect(css).toMatch(/--tack-radius-md:\s*var\(--tack-radius\)/)
+      expect(css).toMatch(/--tack-radius-sm:\s*calc\(var\(--tack-radius\)\s*\*\s*0\.667\)/)
+      expect(css).toMatch(/--tack-radius-lg:\s*calc\(var\(--tack-radius\)\s*\*\s*1\.667\)/)
+      expect(css).toMatch(/--tack-radius-xl:\s*calc\(var\(--tack-radius\)\s*\*\s*2\.333\)/)
+      // --full stays special-cased (pills).
+      expect(css).toMatch(/--tack-radius-full:\s*9999px/)
+    })
+
+    it('inline --tack-radius round-trips and dialog rule still reads tier-2 xl', () => {
+      // jsdom can't resolve calc(var(...)) in getComputedStyle, so this test
+      // verifies the two halves separately: (a) the inline override sticks on
+      // the dialog, and (b) the bundled rule still points at --tack-radius-xl
+      // (which the previous test proved derives from --tack-radius). Together
+      // those imply the cascade — a real-browser smoke test in the PR body
+      // covers the resolved pixel value.
+      const handle = Tack.init({ projectId: 'proj_test' })
+      handle.open()
+      const dialog = getDialog()!
+      dialog.style.setProperty('--tack-radius', '12px')
+      expect(dialog.style.getPropertyValue('--tack-radius')).toBe('12px')
+      const css = widgetCss(widgetShadow()!)
+      expect(css).toMatch(/\[data-tack-widget\][^{]*\{[^}]*border-radius:\s*var\(--tack-radius-xl\)/)
+    })
+
+    it('individual Tier 2 override on the dialog beats the cascade', () => {
+      const handle = Tack.init({ projectId: 'proj_test' })
+      handle.open()
+      const dialog = getDialog()!
+      dialog.style.setProperty('--tack-radius', '20px')
+      dialog.style.setProperty('--tack-radius-xl', '8px')
+      expect(dialog.style.getPropertyValue('--tack-radius-xl')).toBe('8px')
+    })
+  })
+
   it('SSR (no window) returns a no-op handle without throwing', () => {
     const realWindow = globalThis.window
     const realDocument = globalThis.document

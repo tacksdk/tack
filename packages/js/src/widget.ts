@@ -1599,11 +1599,14 @@ const TACK_DEFAULT_CSS = `
   --tack-space-2xl: 32px;
   --tack-space-3xl: 48px;
   --tack-space-4xl: 64px;
-  /* Radii */
-  --tack-radius-sm: 4px;
-  --tack-radius-md: 6px;
-  --tack-radius-lg: 10px;
-  --tack-radius-xl: 14px;
+  /* Radii — Tier 1 base + Tier 2 derived (DESIGN.md "Token Layers"). Setting
+     --tack-radius cascades to the tier-2 values via calc(); override any
+     individual --tack-radius-{sm,md,lg,xl} to break the cascade for that step. */
+  --tack-radius: 6px;
+  --tack-radius-sm: calc(var(--tack-radius) * 0.667);
+  --tack-radius-md: var(--tack-radius);
+  --tack-radius-lg: calc(var(--tack-radius) * 1.667);
+  --tack-radius-xl: calc(var(--tack-radius) * 2.333);
   --tack-radius-full: 9999px;
   /* Shadows */
   --tack-shadow-sm: 0 1px 2px oklch(0 0 0 / 0.06);
