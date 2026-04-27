@@ -4,6 +4,19 @@
 // `fetch` so submissions resolve against a fake endpoint — the dropdown picks
 // the response shape so you can exercise every FSM branch (success / 4xx /
 // 5xx / 429 / network) without standing up a backend.
+//
+// ⚠️ DO NOT COPY THIS PATTERN INTO PRODUCTION CODE.
+//
+// `__testShadowRoots` is a test-only WeakMap that lets this playground reach
+// into the closed shadow root to apply Layer-3 inline-token overrides. Real
+// consumers do NOT need it — they style via:
+//   1. `preset: 'default' | 'midnight' | 'paper'` (named bundles)
+//   2. Custom `TackThemePreset` object passed to `Tack.init({ preset })`
+//   3. CSS variables on the host page (cascade via `:host` reset)
+//
+// `__testShadowRoots` is scheduled for removal in v1.0 (see widget.ts JSDoc).
+// If you copy this file as a starting point, replace `applyTokenOverrides`
+// with the preset-based API instead.
 
 import { Tack, __testShadowRoots } from '../../packages/js/dist/index.mjs'
 
