@@ -123,6 +123,79 @@ export interface TackWidgetConfig {
    * directly against the returned handle.
    */
   hotkey?: string
+  /**
+   * Launcher placement, when `trigger: 'auto'` mounts a launcher. Has no
+   * effect on the dialog itself — `<dialog>` lives in the top layer and is
+   * centered by the browser regardless. Accepts the legacy short forms
+   * `'br'` and `'bl'` with a one-shot deprecation warning per page load.
+   */
+  placement?:
+    | 'bottom-right'
+    | 'bottom-left'
+    | 'top-right'
+    | 'top-left'
+    | 'custom'
+    | 'br'
+    | 'bl'
+  /**
+   * `'auto'` reserves a slot for the SDK to mount a launcher button.
+   * `'none'` (current default) means the host owns its trigger and calls
+   * `handle.open()`. The `'auto'` path is wired through but is currently a
+   * no-op when invoked via `Tack.init` — use `TackLauncher.mount()` for the
+   * launcher today; this option exists so consumer code can adopt the final
+   * surface ahead of the auto-mount landing.
+   */
+  trigger?: 'auto' | 'none'
+  /**
+   * Stacking context for the dialog. Applied as inline `--tack-z-index`.
+   * Default keeps Tack above most third-party widgets (Intercom, Crisp, …).
+   */
+  zIndex?: number
+  /**
+   * `true` (default) opens via `dialog.showModal()` — top-layer rendering,
+   * focus trap, ESC dismissal, backdrop. `false` calls `dialog.show()` —
+   * non-modal, no focus trap, no backdrop. Opt out only when you really
+   * need a non-blocking surface; you give up the a11y guarantees the modal
+   * path provides.
+   */
+  modal?: boolean
+  /**
+   * Lock body scroll while the dialog is open. Default `true`. Skipped when
+   * `modal: false` (no backdrop = non-blocking surface, host scroll is
+   * intentionally available).
+   */
+  scrollLock?: boolean
+  /**
+   * Verbose lifecycle logging via `console.debug`. Off by default. When on,
+   * every FSM transition, capture attempt, and lifecycle boundary is
+   * namespaced as `[tack@<version>]` so it's filterable in devtools.
+   */
+  debug?: boolean
+  /**
+   * Custom fetch implementation passed to the transport. Useful for
+   * corporate proxies, tracing libraries, or test fakes. Defaults to
+   * `globalThis.fetch`.
+   */
+  fetch?: typeof fetch
+  /**
+   * Extra request headers merged into the submit POST. Cannot override
+   * `X-Tack-SDK-Version` — that one is locked last so the version stamp is
+   * always honest for server-side analytics.
+   */
+  headers?: Record<string, string>
+  /**
+   * Screenshot capture escape hatch.
+   *   - `false` disables capture entirely (no toggle in the UI, no module
+   *     load)
+   *   - a function overrides the default html-to-image path; called with
+   *     the capture target element (the host page body), should resolve to
+   *     a `data:image/...;base64,...` URL
+   *   - `undefined` (default) uses the lazy-loaded html-to-image path
+   *
+   * The default capture path is lazy-imported so the main bundle stays
+   * under its size cap.
+   */
+  captureScreenshot?: ((el: Element) => Promise<string>) | false
 }
 
 export interface TackHandle {
@@ -194,6 +267,52 @@ const LEGAL_TRANSITIONS: Record<WidgetState, readonly WidgetState[]> = {
 const SUCCESS_AUTOCLOSE_MS = 1800
 
 /**
+ * Module-level "warned this page load already" set, keyed by the deprecation
+ * token. One-shot warnings prevent log spam when a host re-renders. Reset only
+ * across full page loads — that's the right granularity for "you should
+ * migrate" nudges.
+ */
+const _deprecationWarned: Set<string> = new Set()
+function warnDeprecatedOnce(key: string, message: string): void {
+  if (_deprecationWarned.has(key)) return
+  _deprecationWarned.add(key)
+  if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+    console.warn(`[tack] ${message}`)
+  }
+}
+
+/**
+ * Resolve `placement` accepting the legacy `'br'`/`'bl'` aliases. Each alias
+ * triggers a one-shot deprecation warning so consumers can migrate without
+ * being silently broken. Returns the canonical long form.
+ */
+function resolvePlacement(
+  placement: TackWidgetConfig['placement'] | undefined,
+):
+  | 'bottom-right'
+  | 'bottom-left'
+  | 'top-right'
+  | 'top-left'
+  | 'custom'
+  | undefined {
+  if (placement === 'br') {
+    warnDeprecatedOnce(
+      'placement-br',
+      "placement: 'br' is deprecated; use 'bottom-right'",
+    )
+    return 'bottom-right'
+  }
+  if (placement === 'bl') {
+    warnDeprecatedOnce(
+      'placement-bl',
+      "placement: 'bl' is deprecated; use 'bottom-left'",
+    )
+    return 'bottom-left'
+  }
+  return placement
+}
+
+/**
  * Map a TackError to the FSM error bucket. Server-side issues that a retry
  * might fix (rate limit, 5xx) go to `error_retryable`. Network failures are
  * a separate bucket so the message can be specific. Everything else (4xx
@@ -233,6 +352,13 @@ interface InternalState {
    * "focus returns to trigger on close".
    */
   previousFocus: HTMLElement | null
+  /**
+   * Pre-lock value of `document.body.style.overflow`, captured when scroll
+   * lock kicks in on open(). `null` means we have not locked (so close()
+   * won't accidentally overwrite a host-set value). Restored on close()/
+   * destroy().
+   */
+  priorBodyOverflow: string | null
 }
 
 /**
@@ -279,8 +405,27 @@ function init(config: TackWidgetConfig): TackHandle {
     }
   }
 
+  // Normalize placement up front so legacy aliases ('br'/'bl') warn at init
+  // time, not lazily on first open. Result is stashed back on the config so a
+  // future auto-launcher path reads the canonical value.
+  const normalizedConfig: TackWidgetConfig = {
+    ...config,
+    placement: resolvePlacement(config.placement),
+  }
+
+  // Debug logger. No-op when `debug` is off so the prod hot path stays free of
+  // the bound-function allocation. Tagged with the SDK version so devs can
+  // filter logs across multiple Tack versions on the same page.
+  const dlog: (...args: unknown[]) => void = config.debug
+    ? (...args) => {
+        if (typeof console !== 'undefined' && typeof console.debug === 'function') {
+          console.debug(`[tack@${SDK_VERSION}]`, ...args)
+        }
+      }
+    : () => {}
+
   const state: InternalState = {
-    config: { ...config, endpoint: config.endpoint ?? DEFAULT_ENDPOINT },
+    config: { ...normalizedConfig, endpoint: normalizedConfig.endpoint ?? DEFAULT_ENDPOINT },
     host: null,
     dialog: null,
     textarea: null,
@@ -293,6 +438,7 @@ function init(config: TackWidgetConfig): TackHandle {
     abort: null,
     destroyed: false,
     previousFocus: null,
+    priorBodyOverflow: null,
   }
 
   function ensureMounted(): HTMLDialogElement {
@@ -306,6 +452,13 @@ function init(config: TackWidgetConfig): TackHandle {
 
     const dialog = document.createElement('dialog')
     dialog.setAttribute('data-tack-widget', '')
+
+    // zIndex override applied as inline custom property — stylesheet defaults
+    // to 2147483600 which beats most third-party widgets, but a host with a
+    // bigger sibling (some CMS overlays) needs to bump it explicitly.
+    if (typeof state.config.zIndex === 'number') {
+      dialog.style.setProperty('--tack-z-index', String(state.config.zIndex))
+    }
 
     // Theme presets (DESIGN.md "Theme Presets") drive scheme + tokens. The
     // legacy `theme` prop sets `data-tack-theme` for back-compat selectors.
@@ -481,6 +634,7 @@ function init(config: TackWidgetConfig): TackHandle {
       }
       return
     }
+    dlog('fsm', state.fsm, '→', next)
 
     // Clear any pending success-auto-close when leaving the success state.
     if (state.fsm === 'success' && state.successTimer !== null) {
@@ -632,6 +786,8 @@ function init(config: TackWidgetConfig): TackHandle {
         endpoint: state.config.endpoint,
         body: req,
         signal: abortSignal,
+        fetch: state.config.fetch,
+        headers: state.config.headers,
       })
       // Suppress side effects if the widget was destroyed or the request
       // was cancelled while in flight — the user is no longer there to see
@@ -677,7 +833,21 @@ function init(config: TackWidgetConfig): TackHandle {
       const active =
         typeof document !== 'undefined' ? document.activeElement : null
       state.previousFocus = active instanceof HTMLElement ? active : null
-      dialog.showModal()
+      // modal: false uses dialog.show() — non-modal, no focus trap, no
+      // backdrop, no top-layer escape. Caller has explicitly opted out of
+      // the a11y guarantees showModal provides.
+      const useModal = state.config.modal !== false
+      dlog('open', { modal: useModal })
+      if (useModal) dialog.showModal()
+      else dialog.show()
+      // Body scroll lock — default on, only meaningful when modal (non-modal
+      // surfaces are expected to leave the host scrollable). Stash the prior
+      // overflow value so close() can restore it cleanly even if some other
+      // code touched it in the meantime; documented as best-effort.
+      if (useModal && state.config.scrollLock !== false) {
+        state.priorBodyOverflow = document.body.style.overflow
+        document.body.style.overflow = 'hidden'
+      }
       // Reset to composing on every open. Reopening after a previous error
       // or success should land the user back in the input, not show stale
       // status messages from the prior session.
@@ -691,6 +861,13 @@ function init(config: TackWidgetConfig): TackHandle {
     if (state.destroyed) return
     state.abort?.abort()
     if (state.dialog?.open) state.dialog.close()
+    // Restore body overflow if we locked it. Skip if our stashed value is
+    // null (we never locked) so we don't accidentally clear a host-set value.
+    if (state.priorBodyOverflow !== null) {
+      document.body.style.overflow = state.priorBodyOverflow
+      state.priorBodyOverflow = null
+    }
+    dlog('close')
     // Reset FSM after closing so a subsequent open() starts clean. Skip if
     // we're already idle (e.g. close() called before open() ever fired).
     if (state.fsm !== 'idle') transitionTo('idle')
@@ -731,6 +908,14 @@ function init(config: TackWidgetConfig): TackHandle {
     if (state.destroyed) return
     state.destroyed = true
     state.abort?.abort()
+    // Defensive: if destroy() runs while the dialog is still open (host tore
+    // the component down without close()), the scroll lock would otherwise
+    // outlive the dialog and freeze the page.
+    if (state.priorBodyOverflow !== null) {
+      document.body.style.overflow = state.priorBodyOverflow
+      state.priorBodyOverflow = null
+    }
+    dlog('destroy')
     if (state.successTimer !== null) {
       clearTimeout(state.successTimer)
       state.successTimer = null

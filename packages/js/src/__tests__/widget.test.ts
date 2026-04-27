@@ -773,6 +773,193 @@ describe('Tack widget', () => {
     expect(Tack.version.length).toBeGreaterThan(0)
   })
 
+  describe('S3 options surface', () => {
+    it('zIndex sets --tack-z-index inline on the dialog', () => {
+      const handle = Tack.init({ projectId: 'proj_test', zIndex: 999999 })
+      handle.open()
+      const dialog = getDialog()!
+      expect(dialog.style.getPropertyValue('--tack-z-index')).toBe('999999')
+      handle.destroy()
+    })
+
+    it('zIndex omitted leaves the inline custom property unset', () => {
+      const handle = Tack.init({ projectId: 'proj_test' })
+      handle.open()
+      const dialog = getDialog()!
+      expect(dialog.style.getPropertyValue('--tack-z-index')).toBe('')
+      handle.destroy()
+    })
+
+    it('modal: false uses dialog.show() (no backdrop guarantee)', () => {
+      // We can't test top-layer behavior in jsdom but we can verify the
+      // patched show()/showModal() get called correctly.
+      const showModal = vi.spyOn(HTMLDialogElement.prototype, 'showModal')
+      // Polyfill `show` if missing (jsdom).
+      if (!('show' in HTMLDialogElement.prototype)) {
+        ;(HTMLDialogElement.prototype as { show?: () => void }).show =
+          function (this: HTMLDialogElement) {
+            this.setAttribute('open', '')
+            Object.defineProperty(this, 'open', { configurable: true, value: true })
+          }
+      }
+      const show = vi.spyOn(HTMLDialogElement.prototype, 'show')
+
+      const handle = Tack.init({ projectId: 'proj_test', modal: false })
+      handle.open()
+      expect(show).toHaveBeenCalled()
+      expect(showModal).not.toHaveBeenCalled()
+      handle.destroy()
+    })
+
+    it('modal: true (default) calls showModal()', () => {
+      const showModal = vi.spyOn(HTMLDialogElement.prototype, 'showModal')
+      const handle = Tack.init({ projectId: 'proj_test' })
+      handle.open()
+      expect(showModal).toHaveBeenCalled()
+      handle.destroy()
+    })
+
+    it('scrollLock locks body overflow on open and restores on close', () => {
+      document.body.style.overflow = 'auto'
+      const handle = Tack.init({ projectId: 'proj_test' })
+      handle.open()
+      expect(document.body.style.overflow).toBe('hidden')
+      handle.close()
+      expect(document.body.style.overflow).toBe('auto')
+      handle.destroy()
+    })
+
+    it('scrollLock: false leaves body overflow alone', () => {
+      document.body.style.overflow = 'auto'
+      const handle = Tack.init({ projectId: 'proj_test', scrollLock: false })
+      handle.open()
+      expect(document.body.style.overflow).toBe('auto')
+      handle.destroy()
+    })
+
+    it('modal: false skips scroll lock even if scrollLock is true (no backdrop)', () => {
+      // Polyfill `show` if missing (jsdom).
+      if (!('show' in HTMLDialogElement.prototype)) {
+        ;(HTMLDialogElement.prototype as { show?: () => void }).show =
+          function (this: HTMLDialogElement) {
+            this.setAttribute('open', '')
+            Object.defineProperty(this, 'open', { configurable: true, value: true })
+          }
+      }
+      document.body.style.overflow = 'visible'
+      const handle = Tack.init({
+        projectId: 'proj_test',
+        modal: false,
+        scrollLock: true,
+      })
+      handle.open()
+      expect(document.body.style.overflow).toBe('visible')
+      handle.destroy()
+    })
+
+    it('destroy() while open restores body overflow', () => {
+      document.body.style.overflow = 'scroll'
+      const handle = Tack.init({ projectId: 'proj_test' })
+      handle.open()
+      expect(document.body.style.overflow).toBe('hidden')
+      handle.destroy()
+      expect(document.body.style.overflow).toBe('scroll')
+    })
+
+    it('debug logs FSM transitions via console.debug with namespaced tag', () => {
+      const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {})
+      const handle = Tack.init({ projectId: 'proj_test', debug: true })
+      handle.open()
+      const tagged = debugSpy.mock.calls.filter((c) =>
+        typeof c[0] === 'string' && (c[0] as string).startsWith('[tack@'),
+      )
+      expect(tagged.length).toBeGreaterThan(0)
+      handle.destroy()
+    })
+
+    it('debug off (default) does not emit namespaced logs', () => {
+      const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {})
+      const handle = Tack.init({ projectId: 'proj_test' })
+      handle.open()
+      const tagged = debugSpy.mock.calls.filter((c) =>
+        typeof c[0] === 'string' && (c[0] as string).startsWith('[tack@'),
+      )
+      expect(tagged.length).toBe(0)
+      handle.destroy()
+    })
+
+    it('custom fetch is used by submit', async () => {
+      const customFetch = vi.fn(async () =>
+        ({
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ id: 'fbk_1', url: 'x', created_at: 'x' }),
+        }) as unknown as Response,
+      )
+      // Stub global fetch so we can prove ours was used over it
+      vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('global fetch must not be called'))))
+      const handle = Tack.init({
+        projectId: 'proj_test',
+        fetch: customFetch as unknown as typeof fetch,
+      })
+      handle.open()
+      inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
+      inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+      await flush()
+      expect(customFetch).toHaveBeenCalledOnce()
+      handle.destroy()
+    })
+
+    it('custom headers are merged but cannot override X-Tack-SDK-Version', async () => {
+      const fetchMock = vi.fn(async () =>
+        ({
+          ok: true,
+          status: 200,
+          text: async () => JSON.stringify({ id: 'fbk_1', url: 'x', created_at: 'x' }),
+        }) as unknown as Response,
+      )
+      vi.stubGlobal('fetch', fetchMock)
+      const handle = Tack.init({
+        projectId: 'proj_test',
+        headers: {
+          'X-Custom': 'value',
+          'X-Tack-SDK-Version': 'attacker-controlled',
+        },
+      })
+      handle.open()
+      inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
+      inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+      await flush()
+      const init = (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1]
+      const headers = init.headers as Record<string, string>
+      expect(headers['X-Custom']).toBe('value')
+      expect(headers['X-Tack-SDK-Version']).not.toBe('attacker-controlled')
+      handle.destroy()
+    })
+
+    it("placement 'br' deprecated alias warns once and normalizes", () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const a = Tack.init({ projectId: 'proj_a', placement: 'br' })
+      const b = Tack.init({ projectId: 'proj_b', placement: 'br' })
+      const brWarnings = warnSpy.mock.calls.filter((c) =>
+        typeof c[0] === 'string' && (c[0] as string).includes("'br' is deprecated"),
+      )
+      expect(brWarnings.length).toBe(1) // one-shot per page load
+      a.destroy()
+      b.destroy()
+    })
+
+    it("placement 'bl' deprecated alias warns separately from 'br'", () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const a = Tack.init({ projectId: 'proj_a', placement: 'bl' })
+      const blWarnings = warnSpy.mock.calls.filter((c) =>
+        typeof c[0] === 'string' && (c[0] as string).includes("'bl' is deprecated"),
+      )
+      expect(blWarnings.length).toBe(1)
+      a.destroy()
+    })
+  })
+
   it('SSR (no window) returns a no-op handle without throwing', () => {
     const realWindow = globalThis.window
     const realDocument = globalThis.document
