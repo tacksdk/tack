@@ -9,6 +9,12 @@ export * from './types'
 export { TackError, docUrl } from './errors'
 export { Tack } from './widget'
 export type { TackWidgetConfig, TackHandle } from './widget'
+// Test-only affordance for cross-package tests (e.g. @tacksdk/react). The
+// double underscore prefix signals "not public API" the way Python __dunder__
+// signals private. Closed shadow roots cannot be reached via host.shadowRoot,
+// so this WeakMap is the test-only path back in. Production callers MUST NOT
+// use it. Will be removed from the public bundle in v1.0.
+export { __testShadowRoots } from './widget'
 export { TackLauncher } from './launcher'
 export type {
   TackLauncherConfig,
