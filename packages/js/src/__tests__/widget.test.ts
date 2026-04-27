@@ -1730,18 +1730,19 @@ describe('Tack widget', () => {
       expect(css).toMatch(/--tack-radius-full:\s*9999px/)
     })
 
-    it('overriding --tack-radius cascades to the dialog corner via getComputedStyle', () => {
+    it('inline --tack-radius round-trips and dialog rule still reads tier-2 xl', () => {
+      // jsdom can't resolve calc(var(...)) in getComputedStyle, so this test
+      // verifies the two halves separately: (a) the inline override sticks on
+      // the dialog, and (b) the bundled rule still points at --tack-radius-xl
+      // (which the previous test proved derives from --tack-radius). Together
+      // those imply the cascade — a real-browser smoke test in the PR body
+      // covers the resolved pixel value.
       const handle = Tack.init({ projectId: 'proj_test' })
       handle.open()
       const dialog = getDialog()!
-      // Set the Tier 1 base inline (consumer-side override on the dialog).
       dialog.style.setProperty('--tack-radius', '12px')
-      // Dialog's border-radius is var(--tack-radius-xl) → calc(12 * 2.333) ≈ 28px.
-      // jsdom's getComputedStyle returns the unresolved CSS string for vars/calc,
-      // so assert on the property chain rather than a resolved px value.
       expect(dialog.style.getPropertyValue('--tack-radius')).toBe('12px')
       const css = widgetCss(widgetShadow()!)
-      // Dialog rule reads tier-2 xl, which now derives from tier 1.
       expect(css).toMatch(/\[data-tack-widget\][^{]*\{[^}]*border-radius:\s*var\(--tack-radius-xl\)/)
     })
 

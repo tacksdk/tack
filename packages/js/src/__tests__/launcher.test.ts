@@ -266,6 +266,33 @@ describe('TackLauncher', () => {
       handle.destroy()
     })
 
+    it('CSS fallback: --tack-accent on an ancestor flows to launcher when no preset', () => {
+      // The CSS-only path: launcher rule reads var(--tack-accent, default).
+      // A consumer who sets --tack-accent at :root / body level should see
+      // the launcher pick it up via the inheritance chain, even without
+      // passing a preset. Regression test for the var() fallback being
+      // accidentally removed from the launcher CSS.
+      document.body.style.setProperty('--tack-accent', 'oklch(0.5 0.3 30)')
+      const handle = TackLauncher.mount({ projectId: 'proj_test' })
+      const button = document.querySelector<HTMLButtonElement>('[data-tack-launcher]')!
+      // No inline override (default preset has empty tokens).
+      expect(button.style.getPropertyValue('--tack-launcher-accent')).toBe('')
+      // The launcher CSS rule itself must declare the var() fallback. We
+      // assert on the stylesheet text rather than getComputedStyle because
+      // jsdom does not always cascade CSS variables across the launcher's
+      // global <style> tag back to the body element. This catches the
+      // regression target: someone deletes the var() fallback.
+      const launcherStyle = document.head.querySelector('style[data-tack-launcher-styles]')
+      expect(launcherStyle?.textContent ?? '').toMatch(
+        /--tack-launcher-accent:\s*var\(--tack-accent,/,
+      )
+      expect(launcherStyle?.textContent ?? '').toMatch(
+        /--tack-launcher-fg:\s*var\(--tack-fg-on-accent,/,
+      )
+      handle.destroy()
+      document.body.style.removeProperty('--tack-accent')
+    })
+
     it('custom preset object → launcher mirrors the supplied accent', () => {
       const handle = TackLauncher.mount({
         projectId: 'proj_test',
