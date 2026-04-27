@@ -107,6 +107,11 @@ function patchDialog() {
     proto.close = function (this: HTMLDialogElement) {
       this.removeAttribute('open')
       Object.defineProperty(this, 'open', { configurable: true, value: false, writable: true })
+      // Real browsers dispatch a 'close' event from dialog.close(); jsdom
+      // doesn't. The widget's discard semantics (clear textarea + screenshot)
+      // hook into this event so all dismissal paths (Cancel, ESC, backdrop)
+      // funnel through it.
+      this.dispatchEvent(new Event('close'))
     }
   }
 }
@@ -1177,6 +1182,87 @@ describe('Tack widget', () => {
       textarea.value = 'edited'
       textarea.dispatchEvent(new Event('input', { bubbles: true }))
       expect(getDialog()!.getAttribute('data-tack-state')).toBe('composing')
+      handle.destroy()
+    })
+
+    it('ESC (native dialog close) clears textarea + screenshot — same as Cancel', async () => {
+      const handle = Tack.init({
+        projectId: 'proj_test',
+        captureScreenshot: (async () =>
+          'data:image/png;base64,ESCIMG') as unknown as (
+          el: Element,
+        ) => Promise<string>,
+      })
+      handle.open()
+      const textarea = inShadow<HTMLTextAreaElement>('[data-tack-input]')!
+      textarea.value = 'mid-thought'
+      inShadow<HTMLButtonElement>('[data-tack-capture-button]')!.click()
+      await flushCapture()
+      // Simulate ESC by closing the dialog directly (jsdom dispatches the
+      // close event on dialog.close()). This is the path ESC takes natively.
+      getDialog()!.close()
+      handle.open()
+      expect(inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value).toBe('')
+      expect(inShadow<HTMLImageElement>('[data-tack-capture-preview]')!.hidden).toBe(true)
+      expect(inShadow<HTMLButtonElement>('[data-tack-capture-button]')!.textContent).toBe(
+        'Add screenshot',
+      )
+      handle.destroy()
+    })
+
+    it('Add screenshot in capture_failed retries (not silent no-op)', async () => {
+      let attempt = 0
+      const handle = Tack.init({
+        projectId: 'proj_test',
+        captureScreenshot: (async () => {
+          attempt++
+          if (attempt === 1) throw new Error('first fail')
+          return 'data:image/png;base64,RETRY'
+        }) as unknown as (el: Element) => Promise<string>,
+      })
+      handle.open()
+      const btn = inShadow<HTMLButtonElement>('[data-tack-capture-button]')!
+      btn.click()
+      await flushCapture()
+      expect(getDialog()!.getAttribute('data-tack-state')).toBe('capture_failed')
+
+      // Click again — must actually retry, not silently no-op.
+      btn.click()
+      await flushCapture()
+      expect(attempt).toBe(2)
+      expect(btn.textContent).toBe('Remove screenshot')
+      const preview = inShadow<HTMLImageElement>('[data-tack-capture-preview]')!
+      expect(preview.getAttribute('src')).toBe('data:image/png;base64,RETRY')
+      handle.destroy()
+    })
+
+    it('Cancel during in-flight capture: late-resolving capture does NOT re-attach', async () => {
+      let resolveCapture: (v: string) => void = () => {}
+      const handle = Tack.init({
+        projectId: 'proj_test',
+        captureScreenshot: (() =>
+          new Promise<string>((r) => {
+            resolveCapture = r
+          })) as unknown as (el: Element) => Promise<string>,
+      })
+      handle.open()
+      inShadow<HTMLButtonElement>('[data-tack-capture-button]')!.click()
+      // Capture is in flight (capturing state, no resolution yet).
+      await flush()
+      expect(getDialog()!.getAttribute('data-tack-state')).toBe('capturing')
+      // User cancels.
+      inShadow<HTMLButtonElement>('[data-tack-cancel]')!.click()
+      // Now the capture finally resolves — must NOT re-attach.
+      resolveCapture('data:image/png;base64,STALE')
+      await flush()
+      // Reopen — should be clean slate, no stale screenshot.
+      handle.open()
+      const preview = inShadow<HTMLImageElement>('[data-tack-capture-preview]')!
+      expect(preview.hidden).toBe(true)
+      expect(preview.getAttribute('src')).toBeNull()
+      expect(inShadow<HTMLButtonElement>('[data-tack-capture-button]')!.textContent).toBe(
+        'Add screenshot',
+      )
       handle.destroy()
     })
 
