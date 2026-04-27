@@ -317,9 +317,24 @@
         <div class="control">
           <label for="accent">Accent color override</label>
           <div class="row">
-            <input type="color" id="accent" value="" />
-            <span class="value" id="accent-value">(preset)</span>
+            <input type="color" id="accent" value="#22c55e" />
+            <button
+              type="button"
+              id="accent-clear"
+              style="
+                padding: 4px 8px;
+                font-size: 11px;
+                background: var(--bg);
+                color: var(--fg-muted);
+                border: 1px solid var(--border);
+                border-radius: 4px;
+                cursor: pointer;
+              "
+            >
+              clear
+            </button>
           </div>
+          <span class="value" id="accent-value">(using preset accent)</span>
         </div>
 
         <div class="control">

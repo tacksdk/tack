@@ -91,6 +91,14 @@ const submitLabelEl = $('submit-label')
 const cancelLabelEl = $('cancel-label')
 const accentEl = $('accent')
 const accentValueEl = $('accent-value')
+const accentClearEl = $('accent-clear')
+
+// `<input type="color">` has no proper "unset" state — its value is always
+// a hex string (defaults to #000000 even with value=""). To distinguish
+// "user picked a color" vs "user hasn't touched it," we track the override
+// status explicitly. Until the user fires `input` on the picker, the
+// preset's accent stands.
+let accentOverridden = false
 const radiusEl = $('radius')
 const radiusValueEl = $('radius-value')
 const responseEl = $('response')
@@ -154,12 +162,14 @@ function applyTokenOverrides(handle) {
   if (!shadow) return
   const dialog = shadow.querySelector('[data-tack-widget]')
   if (!dialog) return
-  // Accent override.
-  if (accentEl.value) {
+  // Accent override — only when the user has actually picked a color.
+  if (accentOverridden) {
     dialog.style.setProperty('--tack-accent', accentEl.value)
+    dialog.style.setProperty('--tack-accent-strong', accentEl.value)
     dialog.style.setProperty('--tack-border-focus', accentEl.value)
   } else {
     dialog.style.removeProperty('--tack-accent')
+    dialog.style.removeProperty('--tack-accent-strong')
     dialog.style.removeProperty('--tack-border-focus')
   }
   // Radius override.
@@ -216,10 +226,19 @@ function serializeConfig(config) {
 })
 
 accentEl.addEventListener('input', () => {
-  accentValueEl.textContent = accentEl.value || '(preset)'
+  // First interaction flips the override on. Subsequent picks update the
+  // value; the override stays on until the user clicks "clear."
+  accentOverridden = true
+  accentValueEl.textContent = `using ${accentEl.value}`
   // Rebuild so the inline override reapplies on next open. Cheaper would be
   // to set the property on the existing dialog directly, but the dialog
   // isn't mounted until first open — remount keeps the path uniform.
+  remount()
+})
+
+accentClearEl.addEventListener('click', () => {
+  accentOverridden = false
+  accentValueEl.textContent = '(using preset accent)'
   remount()
 })
 
@@ -240,8 +259,9 @@ resetBtn.addEventListener('click', () => {
   placeholderEl.value = 'What can we improve?'
   submitLabelEl.value = 'Send'
   cancelLabelEl.value = 'Cancel'
-  accentEl.value = ''
-  accentValueEl.textContent = '(preset)'
+  accentEl.value = '#22c55e'
+  accentOverridden = false
+  accentValueEl.textContent = '(using preset accent)'
   radiusEl.value = '14'
   radiusValueEl.textContent = '14px'
   responseEl.value = 'success'
