@@ -55,6 +55,14 @@ export interface TackWidgetConfig {
    * `injectStyles !== false`). When you provide your own CSS, theme has no
    * effect on appearance — it just sets the `data-tack-theme` attribute on
    * the dialog so your selectors can branch.
+   *
+   * @deprecated Use `preset` (with a TackThemePreset whose `scheme` field
+   * supplies the color mode). The `theme` prop and `preset.scheme` both
+   * produce CSS attributes (`data-tack-theme` and `data-tack-scheme`) and
+   * the dark/light selectors group both via comma — meaning if a consumer
+   * sets `theme="dark"` AND `preset.scheme="light"`, the dark branch wins
+   * (CSS doesn't know which is "newer"). Resolution: scheduled for removal
+   * in S8 (public surface consolidation). Pass `preset` only.
    */
   theme?: 'auto' | 'light' | 'dark'
   /**
@@ -340,7 +348,9 @@ function init(config: TackWidgetConfig): TackHandle {
     textarea.rows = 4
     textarea.placeholder = state.config.placeholder ?? 'What can we improve?'
     textarea.setAttribute('data-tack-input', '')
-    textarea.setAttribute('aria-label', state.config.title ?? 'Send feedback')
+    // No aria-label here — the dialog's aria-labelledby (above) cascades to
+    // form controls inside per WAI-ARIA 1.2. Setting both causes some screen
+    // readers to read the title twice.
 
     // Aria-live status region — empty during composing/submitting, populated
     // by transitionTo() with success/error messages. role="status" + aria-live
@@ -449,6 +459,13 @@ function init(config: TackWidgetConfig): TackHandle {
    * retry, doc link, submit), and announces via aria-live. Illegal
    * transitions are no-ops with a console.debug log so devs see them but
    * production keeps running.
+   *
+   * TODO(phase 3): All status/button strings below are hardcoded English
+   * ("Thanks for the feedback.", "Try again", "Read the docs", "Sending…",
+   * "Please type something before sending."). For Phase 3 (open-signup OSS),
+   * accept a `messages?: Partial<Record<MessageKey, string>>` config field
+   * and look these up by key. Phase 1+2 are English-only consumers so the
+   * cost is currently unjustified; revisit when an external dev asks.
    */
   function transitionTo(
     next: WidgetState,
@@ -578,7 +595,22 @@ function init(config: TackWidgetConfig): TackHandle {
     // textarea check below is belt+suspenders.
     if (state.fsm === 'submitting') return
     const body = state.textarea.value.trim()
-    if (!body) return
+    if (!body) {
+      // Empty/whitespace-only body. Don't transition the FSM (composing stays
+      // composing) but DO surface a visible + aria-live announcement so
+      // keyboard / screen-reader users get feedback. Plain `event.preventDefault`
+      // means native textarea.required validation never fires, so we own this.
+      const status = state.statusEl
+      const textarea = state.textarea
+      if (status) {
+        status.hidden = false
+        status.textContent = 'Please type something before sending.'
+      }
+      textarea.setAttribute('aria-invalid', 'true')
+      if (status) textarea.setAttribute('aria-describedby', status.id)
+      textarea.focus()
+      return
+    }
 
     transitionTo('submitting')
     state.abort = new AbortController()

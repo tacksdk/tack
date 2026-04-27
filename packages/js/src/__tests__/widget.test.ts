@@ -117,6 +117,45 @@ describe('Tack widget', () => {
     expect(() => Tack.init({} as never)).toThrow(/projectId/)
   })
 
+  it('closed shadow DOM: host.shadowRoot is null from outside (security claim)', () => {
+    const handle = Tack.init({ projectId: 'proj_test' })
+    handle.open()
+    const host = document.querySelector('tack-widget-host')!
+    // Closed mode hides the shadow root from host JS. This is the chameleon
+    // contract from DESIGN.md — verify the property holds at runtime.
+    expect(host.shadowRoot).toBeNull()
+    // But test code can still pierce via the WeakMap backdoor.
+    expect(__testShadowRoots.get(host)).toBeDefined()
+    handle.destroy()
+  })
+
+  it('falls back to a per-shadow <style> element when adoptedStyleSheets is missing', () => {
+    // Stub the constructable-stylesheets path. ShadowRoot keeps the
+    // descriptor in jsdom, so we monkey-patch CSSStyleSheet.prototype to
+    // simulate Safari 15.4-16.3.
+    const originalReplaceSync = (CSSStyleSheet.prototype as unknown as {
+      replaceSync?: unknown
+    }).replaceSync
+    delete (CSSStyleSheet.prototype as unknown as { replaceSync?: unknown }).replaceSync
+    try {
+      const handle = Tack.init({ projectId: 'proj_test' })
+      handle.open()
+      const root = __testShadowRoots.get(
+        document.querySelector('tack-widget-host')!,
+      )!
+      // Fallback path appends a <style data-tack-styles> inside the shadow.
+      const styleEl = root.querySelector('style[data-tack-styles]')
+      expect(styleEl).not.toBeNull()
+      expect(styleEl!.textContent).toContain('--tack-bg')
+      handle.destroy()
+    } finally {
+      if (originalReplaceSync) {
+        ;(CSSStyleSheet.prototype as unknown as { replaceSync: unknown }).replaceSync =
+          originalReplaceSync
+      }
+    }
+  })
+
   it('returns a handle with open/close/destroy', () => {
     const handle = Tack.init({ projectId: 'proj_test' })
     expect(typeof handle.open).toBe('function')
@@ -554,6 +593,25 @@ describe('Tack widget', () => {
       handle.destroy()
     })
 
+    it('error_docs with non-http doc_url leaves the link hidden (XSS guard)', async () => {
+      // Defensive against a misconfigured backend sending a javascript: URL.
+      // rel=noopener doesn't block javascript: scheme execution on click.
+      mockJsonError(400, {
+        error: {
+          type: 'invalid_request',
+          message: 'oops',
+          doc_url: 'javascript:alert(1)' as string,
+        },
+      })
+      const handle = Tack.init({ projectId: 'proj_test' })
+      await submitWith(handle, 'hi')
+
+      const docLink = inShadow<HTMLAnchorElement>('[data-tack-doc-link]')!
+      expect(docLink.hidden).toBe(true)
+      expect(docLink.hasAttribute('href')).toBe(false)
+      handle.destroy()
+    })
+
     it('network failure → network_error state with retry button', async () => {
       vi.stubGlobal(
         'fetch',
@@ -650,6 +708,25 @@ describe('Tack widget', () => {
       expect(status.hidden).toBe(true)
       const submit = inShadow<HTMLButtonElement>('[data-tack-submit]')!
       expect(submit.hidden).toBe(false)
+      handle.destroy()
+    })
+
+    it('empty-body submit announces a validation message via aria-live (no silent no-op)', () => {
+      const handle = Tack.init({ projectId: 'proj_test' })
+      handle.open()
+      const textarea = inShadow<HTMLTextAreaElement>('[data-tack-input]')!
+      textarea.value = '   ' // whitespace-only — same as empty after trim
+      inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+
+      // FSM stays in composing — no transition for validation
+      expect(getDialog()!.getAttribute('data-tack-state')).toBe('composing')
+      // But status region is populated and announced
+      const status = inShadow<HTMLDivElement>('[data-tack-status]')!
+      expect(status.hidden).toBe(false)
+      expect(status.textContent).toMatch(/type something/i)
+      // Textarea wired up for screen readers per WAI-ARIA 1.2
+      expect(textarea.getAttribute('aria-invalid')).toBe('true')
+      expect(textarea.getAttribute('aria-describedby')).toBe(status.id)
       handle.destroy()
     })
 
