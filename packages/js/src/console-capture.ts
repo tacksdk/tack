@@ -58,6 +58,13 @@ export function installConsoleCapture(
   // Track each (level, original, wrapper) so uninstall can verify identity.
   // Map by level — multiple installs on the same level stack independently.
   const installs: { level: Level; original: unknown; wrapper: unknown }[] = []
+  // Shared "this handle is destroyed" flag closure. When uninstall runs
+  // but a later wrapper (e.g. Sentry) sits on top of ours, we can't
+  // unhook from the chain — but we can set this flag so our wrapper
+  // becomes a thin passthrough on subsequent calls. Without it, an
+  // orphaned wrapper keeps serializing args + pushing to an unreachable
+  // buffer forever.
+  const flags = { destroyed: false }
 
   for (const level of levels) {
     const original = (console as unknown as Record<Level, (...args: unknown[]) => void>)[
@@ -65,6 +72,16 @@ export function installConsoleCapture(
     ]
     if (typeof original !== 'function') continue
     const wrapper = (...args: unknown[]) => {
+      // Post-destroy passthrough: skip serialize + buffer push, just
+      // forward. The wrapper might still be in someone's call chain
+      // (Sentry-style late wrap on top of us); we don't want it to
+      // keep doing work for a handle that's been disposed.
+      if (flags.destroyed) {
+        try {
+          ;(original as (...a: unknown[]) => void)(...args)
+        } catch {}
+        return
+      }
       try {
         const msg = serializeArgs(args)
         buffer.push({ level, ts: Date.now(), msg })
@@ -89,6 +106,9 @@ export function installConsoleCapture(
   return {
     snapshot: () => buffer.slice(),
     uninstall: () => {
+      // Set the flag FIRST so any wrapper still in a call chain becomes a
+      // passthrough immediately, before we try to unhook ourselves.
+      flags.destroyed = true
       for (const inst of installs) {
         const current = (console as unknown as Record<Level, unknown>)[inst.level]
         if (current === inst.wrapper) {

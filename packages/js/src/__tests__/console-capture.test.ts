@@ -117,6 +117,34 @@ describe('installConsoleCapture', () => {
     expect(console.error).toBe(sentryWrapper)
   })
 
+  it('post-destroy passthrough: orphaned wrapper does not keep buffering', () => {
+    const native = console.error
+    console.error = (() => {}) as typeof console.error
+    try {
+      const a = installConsoleCapture(true)
+      const aWrapper = console.error
+      // Late wrap on top of A.
+      const sentryInner = vi.fn()
+      const sentryWrap = ((...args: unknown[]) => {
+        sentryInner(...args)
+        ;(aWrapper as (...a: unknown[]) => void)(...args)
+      }) as typeof console.error
+      console.error = sentryWrap
+      // Destroy A. Wrapper-identity check fails (Sentry's on top), so A's
+      // wrapper stays in the call chain. But the destroyed flag flips, so
+      // A's wrapper becomes a passthrough.
+      a.uninstall()
+      expect(console.error).toBe(sentryWrap)
+      console.error('after-destroy')
+      expect(sentryInner).toHaveBeenCalledWith('after-destroy')
+      // A's snapshot returns [] (buffer cleared on uninstall), and the
+      // orphaned A wrapper did NOT push (passthrough mode).
+      expect(a.snapshot()).toEqual([])
+    } finally {
+      console.error = native
+    }
+  })
+
   it('uninstall clears the buffer', () => {
     muteConsole('error')
     const handle = installConsoleCapture(true)
