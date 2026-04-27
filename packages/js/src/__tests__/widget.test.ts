@@ -970,7 +970,7 @@ describe('Tack widget', () => {
     })
   })
 
-  describe('S4 screenshot capture', () => {
+  describe('S4 screenshot capture (Add screenshot button)', () => {
     function mockSubmitOk() {
       const fetchMock = vi.fn(async () =>
         ({
@@ -984,54 +984,93 @@ describe('Tack widget', () => {
       return fetchMock
     }
 
-    it('renders an Include screenshot toggle (unchecked by default — privacy)', () => {
+    it('renders an Add screenshot button by default', () => {
       const handle = Tack.init({ projectId: 'proj_test' })
       handle.open()
-      const toggle = inShadow<HTMLInputElement>('[data-tack-capture-toggle]')
-      expect(toggle).not.toBeNull()
-      // Privacy-by-default: user opts in by checking the toggle.
-      expect(toggle!.checked).toBe(false)
+      const btn = inShadow<HTMLButtonElement>('[data-tack-capture-button]')
+      expect(btn).not.toBeNull()
+      expect(btn!.textContent).toBe('Add screenshot')
+      expect(btn!.getAttribute('aria-pressed')).toBe('false')
       handle.destroy()
     })
 
-    it('captureScreenshot: false removes the toggle entirely', () => {
+    it('captureScreenshot: false removes the button + row entirely', () => {
       const handle = Tack.init({
         projectId: 'proj_test',
         captureScreenshot: false,
       })
       handle.open()
-      expect(inShadow('[data-tack-capture-toggle]')).toBeNull()
+      expect(inShadow('[data-tack-capture-button]')).toBeNull()
       expect(inShadow('[data-tack-capture-row]')).toBeNull()
       handle.destroy()
     })
 
-    it('captureScreenshot: customFn is called and result is sent as screenshot', async () => {
-      const fetchMock = mockSubmitOk()
-      const customFn = vi.fn(async () => 'data:image/png;base64,CUSTOM')
+    it('clicking Add screenshot captures, attaches data URL, flips to Remove', async () => {
+      const customFn = vi.fn(async () => 'data:image/png;base64,IMG')
       const handle = Tack.init({
         projectId: 'proj_test',
         captureScreenshot: customFn,
       })
       handle.open()
-      // User opts in by checking the toggle.
-      inShadow<HTMLInputElement>('[data-tack-capture-toggle]')!.checked = true
-      inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'great'
-      inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+      const btn = inShadow<HTMLButtonElement>('[data-tack-capture-button]')!
+      btn.click()
       await flushCapture()
 
       expect(customFn).toHaveBeenCalledOnce()
-      // customFn is invoked with document.body (the host page, not the dialog)
-      expect((customFn.mock.calls[0] as unknown as [Element])[0]).toBe(
-        document.body,
-      )
-      const sent = JSON.parse(
-        (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string,
-      )
-      expect(sent.screenshot).toBe('data:image/png;base64,CUSTOM')
+      expect(btn.textContent).toBe('Remove screenshot')
+      expect(btn.getAttribute('aria-pressed')).toBe('true')
+      const preview = inShadow<HTMLImageElement>('[data-tack-capture-preview]')!
+      expect(preview.hidden).toBe(false)
+      expect(preview.getAttribute('src')).toBe('data:image/png;base64,IMG')
       handle.destroy()
     })
 
-    it('toggle unchecked → no screenshot in request, no capture call', async () => {
+    it('after capture, Send (single click) attaches the screenshot to the request', async () => {
+      const fetchMock = mockSubmitOk()
+      const handle = Tack.init({
+        projectId: 'proj_test',
+        captureScreenshot: (async () =>
+          'data:image/png;base64,SHOT') as unknown as (
+          el: Element,
+        ) => Promise<string>,
+      })
+      handle.open()
+      inShadow<HTMLButtonElement>('[data-tack-capture-button]')!.click()
+      await flushCapture()
+      inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'great'
+      inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+      await flush()
+
+      expect(fetchMock).toHaveBeenCalledOnce()
+      const sent = JSON.parse(
+        (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string,
+      )
+      expect(sent.screenshot).toBe('data:image/png;base64,SHOT')
+      handle.destroy()
+    })
+
+    it('clicking Remove screenshot drops the attachment + resets button', async () => {
+      const handle = Tack.init({
+        projectId: 'proj_test',
+        captureScreenshot: (async () =>
+          'data:image/png;base64,IMG') as unknown as (
+          el: Element,
+        ) => Promise<string>,
+      })
+      handle.open()
+      const btn = inShadow<HTMLButtonElement>('[data-tack-capture-button]')!
+      btn.click()
+      await flushCapture()
+      expect(btn.textContent).toBe('Remove screenshot')
+      btn.click() // second click removes
+      const preview = inShadow<HTMLImageElement>('[data-tack-capture-preview]')!
+      expect(preview.hidden).toBe(true)
+      expect(btn.textContent).toBe('Add screenshot')
+      expect(btn.getAttribute('aria-pressed')).toBe('false')
+      handle.destroy()
+    })
+
+    it('Send without ever clicking Add screenshot → no screenshot in request', async () => {
       const fetchMock = mockSubmitOk()
       const customFn = vi.fn()
       const handle = Tack.init({
@@ -1041,10 +1080,8 @@ describe('Tack widget', () => {
         ) => Promise<string>,
       })
       handle.open()
-      // Toggle defaults unchecked; this test asserts that path.
       inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
       inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
-      await flush()
       await flush()
 
       expect(customFn).not.toHaveBeenCalled()
@@ -1055,25 +1092,29 @@ describe('Tack widget', () => {
       handle.destroy()
     })
 
-    it('capture failure → capture_failed shows status and submit proceeds without screenshot', async () => {
+    it('capture failure → capture_failed status, button reverts, submit still works', async () => {
       const fetchMock = mockSubmitOk()
-      const customFn = vi.fn(async () => {
-        throw new Error('cross-origin taint')
-      })
       const handle = Tack.init({
         projectId: 'proj_test',
-        captureScreenshot: customFn as unknown as (
-          el: Element,
-        ) => Promise<string>,
+        captureScreenshot: (async () => {
+          throw new Error('cross-origin taint')
+        }) as unknown as (el: Element) => Promise<string>,
       })
       handle.open()
-      inShadow<HTMLInputElement>('[data-tack-capture-toggle]')!.checked = true
-      inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
-      inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
-      // Allow capture promise + capture_failed transition + submit
+      const btn = inShadow<HTMLButtonElement>('[data-tack-capture-button]')!
+      btn.click()
       await flushCapture()
 
-      // Submit STILL fired (capture failure is soft)
+      expect(getDialog()!.getAttribute('data-tack-state')).toBe('capture_failed')
+      const status = inShadow<HTMLDivElement>('[data-tack-status]')!
+      expect(status.hidden).toBe(false)
+      expect(status.textContent).toMatch(/screenshot unavailable/i)
+      // Button reverts so the user can retry
+      expect(btn.textContent).toBe('Add screenshot')
+      // Send still works (capture is independent of submit)
+      inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
+      inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+      await flush()
       expect(fetchMock).toHaveBeenCalledOnce()
       const sent = JSON.parse(
         (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string,
@@ -1083,7 +1124,6 @@ describe('Tack widget', () => {
     })
 
     it('capture failure with debug:true fires onError(screenshot_unavailable)', async () => {
-      mockSubmitOk()
       const onError = vi.fn()
       const handle = Tack.init({
         projectId: 'proj_test',
@@ -1094,11 +1134,8 @@ describe('Tack widget', () => {
         }) as unknown as (el: Element) => Promise<string>,
       })
       handle.open()
-      inShadow<HTMLInputElement>('[data-tack-capture-toggle]')!.checked = true
-      inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
-      inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+      inShadow<HTMLButtonElement>('[data-tack-capture-button]')!.click()
       await flushCapture()
-
       const softErrors = onError.mock.calls.filter((c) =>
         typeof c[0] === 'object' &&
         c[0] !== null &&
@@ -1108,8 +1145,7 @@ describe('Tack widget', () => {
       handle.destroy()
     })
 
-    it('capture failure with debug:false does not fire onError', async () => {
-      mockSubmitOk()
+    it('capture failure with debug:false does NOT fire onError', async () => {
       const onError = vi.fn()
       const handle = Tack.init({
         projectId: 'proj_test',
@@ -1119,16 +1155,32 @@ describe('Tack widget', () => {
         }) as unknown as (el: Element) => Promise<string>,
       })
       handle.open()
-      inShadow<HTMLInputElement>('[data-tack-capture-toggle]')!.checked = true
-      inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
-      inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+      inShadow<HTMLButtonElement>('[data-tack-capture-button]')!.click()
       await flushCapture()
       expect(onError).not.toHaveBeenCalled()
       handle.destroy()
     })
 
-    it('preview img populated with the data URL on success', async () => {
-      mockSubmitOk()
+    it('typing in capture_failed returns to composing', async () => {
+      const handle = Tack.init({
+        projectId: 'proj_test',
+        captureScreenshot: (async () => {
+          throw new Error('boom')
+        }) as unknown as (el: Element) => Promise<string>,
+      })
+      handle.open()
+      inShadow<HTMLButtonElement>('[data-tack-capture-button]')!.click()
+      await flushCapture()
+      expect(getDialog()!.getAttribute('data-tack-state')).toBe('capture_failed')
+
+      const textarea = inShadow<HTMLTextAreaElement>('[data-tack-input]')!
+      textarea.value = 'edited'
+      textarea.dispatchEvent(new Event('input', { bubbles: true }))
+      expect(getDialog()!.getAttribute('data-tack-state')).toBe('composing')
+      handle.destroy()
+    })
+
+    it('Cancel clears textarea + attached screenshot + closes', async () => {
       const handle = Tack.init({
         projectId: 'proj_test',
         captureScreenshot: (async () =>
@@ -1137,36 +1189,23 @@ describe('Tack widget', () => {
         ) => Promise<string>,
       })
       handle.open()
-      inShadow<HTMLInputElement>('[data-tack-capture-toggle]')!.checked = true
-      inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
-      inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
-      await flushCapture()
-
-      const preview = inShadow<HTMLImageElement>('[data-tack-capture-preview]')!
-      expect(preview.hidden).toBe(false)
-      expect(preview.getAttribute('src')).toBe('data:image/png;base64,IMG')
-      handle.destroy()
-    })
-
-    it('typing in capture_failed returns to composing', async () => {
-      mockSubmitOk()
-      const handle = Tack.init({
-        projectId: 'proj_test',
-        captureScreenshot: (async () => {
-          throw new Error('boom')
-        }) as unknown as (el: Element) => Promise<string>,
-      })
-      handle.open()
-      inShadow<HTMLInputElement>('[data-tack-capture-toggle]')!.checked = true
       const textarea = inShadow<HTMLTextAreaElement>('[data-tack-input]')!
-      textarea.value = 'hi'
-      inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
-      await flush()
-      // Capture has failed — but we then auto-continued to submitting and
-      // success. To test the dismiss-on-keystroke, we'd need to hold the
-      // FSM in capture_failed. The status would already have moved on.
-      // Skip this assertion — auto-continue is the documented behavior;
-      // capture_failed is a transient render. Test passes if no throws.
+      textarea.value = 'half-typed thought'
+      inShadow<HTMLButtonElement>('[data-tack-capture-button]')!.click()
+      await flushCapture()
+      // Sanity: screenshot is attached, textarea has content
+      expect(inShadow<HTMLImageElement>('[data-tack-capture-preview]')!.hidden).toBe(false)
+      expect(textarea.value).toBe('half-typed thought')
+
+      inShadow<HTMLButtonElement>('[data-tack-cancel]')!.click()
+      // Reopen and verify clean slate
+      handle.open()
+      const reopenedTextarea = inShadow<HTMLTextAreaElement>('[data-tack-input]')!
+      const reopenedPreview = inShadow<HTMLImageElement>('[data-tack-capture-preview]')!
+      const reopenedBtn = inShadow<HTMLButtonElement>('[data-tack-capture-button]')!
+      expect(reopenedTextarea.value).toBe('')
+      expect(reopenedPreview.hidden).toBe(true)
+      expect(reopenedBtn.textContent).toBe('Add screenshot')
       handle.destroy()
     })
   })
