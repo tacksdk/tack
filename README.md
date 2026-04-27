@@ -1,96 +1,73 @@
 # Tack
 
-Embeddable in-app feedback for web apps. Drop a widget into any React app in minutes — submissions flow to your [Tack dashboard](https://tacksdk.com).
+Embeddable in-app feedback for web apps. Drop a widget into any React or vanilla JS app in minutes — submissions flow to your [Tack dashboard](https://tacksdk.com).
 
 ## Packages
 
 | Package | Description |
 |---|---|
-| [`@tacksdk/js`](./packages/js) | Vanilla JS client — framework-agnostic core |
-| [`@tacksdk/react`](./packages/react) | React component (`<TackWidget />`) built on `@tacksdk/js` |
+| [`@tacksdk/js`](./packages/js) | Vanilla JS / TS core — `Tack.init()` widget, `TackLauncher.mount()` floating button, `submit()` headless |
+| [`@tacksdk/react`](./packages/react) | React wrappers — `<TackWidget>`, `<TackLauncher>`, `useTack()` |
 
-## Quick start
+## Quick start (React)
 
 ```bash
 npm install @tacksdk/react
 ```
 
 ```tsx
-import { TackWidget } from '@tacksdk/react'
+import { TackLauncher } from '@tacksdk/react'
 
 export function App() {
   return (
     <>
       <YourApp />
-      <TackWidget projectId="proj_your_project_id" />
+      <TackLauncher projectId="proj_your_project_id" />
     </>
   )
 }
 ```
 
-Get your project id from [tacksdk.com](https://tacksdk.com).
-
-## Vanilla JS
+## Quick start (vanilla)
 
 ```bash
 npm install @tacksdk/js
 ```
 
 ```ts
-import { init, submit } from '@tacksdk/js'
+import { Tack } from '@tacksdk/js'
 
-init({ projectId: 'proj_your_project_id' })
+const handle = Tack.init({ projectId: 'proj_your_project_id' })
+
+document.querySelector('#feedback-button')!
+  .addEventListener('click', () => handle.open())
+```
+
+Get your project id from [tacksdk.com](https://tacksdk.com).
+
+## Headless
+
+If you don't want any UI — for example, posting a form's textarea straight to the API — use the headless subpath:
+
+```ts
+import { submit } from '@tacksdk/js/headless'
 
 await submit({
+  projectId: 'proj_your_project_id',
   body: 'The export button is broken',
   user: { id: 'user_123', email: 'ada@example.com' },
-  metadata: { plan: 'pro' },
 })
 ```
 
-## API
+The headless subpath does NOT pull the widget DOM into your bundle.
 
-### `@tacksdk/js`
+## Errors
 
-#### `init(config)`
+`submit()` and the widget's `onError` callback both surface a typed `TackError` with `type`, `docUrl`, and `status`. See per-package READMEs for the full list.
 
-Must be called once before submitting feedback.
+## Stability
 
-| Option | Type | Required | Description |
-|---|---|---|---|
-| `projectId` | `string` | ✓ | Public project id from the Tack dashboard (`proj_...`) |
-| `endpoint` | `string` | | Override the API endpoint (defaults to `https://tacksdk.com`) |
-| `user` | `TackUser` | | Default user attached to every submission |
-| `metadata` | `object` | | Default metadata attached to every submission |
-
-#### `submit(input)`
-
-Submits a feedback entry. Automatically attaches `url`, `userAgent`, and `viewport` unless overridden. Returns `{ id, url, created_at }`.
-
-| Option | Type | Required | Description |
-|---|---|---|---|
-| `body` | `string` | ✓ | Feedback text |
-| `rating` | `number` | | Optional rating |
-| `screenshot` | `string` | | Base64-encoded screenshot (data URL) |
-| `user` | `TackUser` | | Overrides the default user |
-| `metadata` | `object` | | Overrides the default metadata |
-| `idempotencyKey` | `string` | | Dedup key (auto-generated if omitted) |
-
-Errors throw a `TackError` with `type`, `docUrl`, and `status`.
-
-### `@tacksdk/react`
-
-#### `<TackWidget />`
-
-| Prop | Type | Default | Description |
-|---|---|---|---|
-| `projectId` | `string` | — | Required. Public project id (`proj_...`) |
-| `endpoint` | `string` | | Override the API endpoint |
-| `label` | `string` | `"Feedback"` | Trigger button label |
-| `user` | `TackUser` | | Passed to every submission |
-| `metadata` | `object` | | Extra metadata on every submission |
-| `onSubmit` | `() => void` | | Called after successful submission |
-| `onError` | `(err: TackError \| Error) => void` | | Called on error |
+Pre-1.0 releases follow [STABILITY.md](./STABILITY.md). Pin your version; minor bumps may include breaking changes.
 
 ## Contributing
 
@@ -106,16 +83,18 @@ pnpm dev          # watch mode for all packages
 
 ```
 packages/
-  js/       @tacksdk/js    — vanilla JS client
-  react/    @tacksdk/react — React component
+  js/       @tacksdk/js    — vanilla core
+  react/    @tacksdk/react — React wrappers
+examples/
+  playground/              — manual smoke-test surface
 ```
 
 ### Releasing
 
-This repo uses [Changesets](https://github.com/changesets/changesets). CI (`.github/workflows/release.yml`) opens a "Version Packages" PR on merge to `main`; merging that PR publishes to npm with provenance.
+This repo uses [Changesets](https://github.com/changesets/changesets). CI opens a "Version Packages" PR on merge to `main`; merging that PR publishes to npm with provenance.
 
 ```bash
-pnpm changeset        # describe your change
+pnpm changeset
 ```
 
 ## License

@@ -1196,6 +1196,79 @@ const TACK_DEFAULT_CSS = `
 }
 
 /*
+ * OKLCH @supports fallback. Defends Safari 15.4-16.3 + older Chrome/Firefox
+ * (~2% of 2026 traffic) where oklch() and color-mix(in oklch, ...) parse as
+ * invalid declarations and the entire property is dropped. Inside this block
+ * we re-set every token that uses oklch() to a hex equivalent so the dialog
+ * still renders. Modern browsers ignore the block entirely (their @supports
+ * test passes), so there's zero cost on the modern path.
+ */
+@supports not (color: oklch(0 0 0)) {
+  [data-tack-widget] {
+    --tack-bg: #f9f9f7;
+    --tack-surface: #ffffff;
+    --tack-surface-elevated: #ffffff;
+    --tack-surface-overlay: rgba(0, 0, 0, 0.4);
+    --tack-fg: #2c2b29;
+    --tack-fg-muted: #717069;
+    --tack-fg-subtle: #9a988f;
+    --tack-fg-on-accent: #ffffff;
+    --tack-border: #e5e3dc;
+    --tack-border-strong: #c8c5bc;
+    --tack-border-focus: #2f9b5c;
+    --tack-accent: #2f9b5c;
+    --tack-accent-strong: #228048;
+    --tack-accent-soft: rgba(47, 155, 92, 0.16);
+    --tack-success: #2f9b5c;
+    --tack-warning: #d49a2a;
+    --tack-error: #c93b2f;
+    --tack-info: #2f7fb8;
+    --tack-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.06);
+    --tack-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.06);
+    --tack-shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.18), 0 4px 12px rgba(0, 0, 0, 0.08);
+  }
+  [data-tack-widget][data-tack-scheme="dark"],
+  [data-tack-widget][data-tack-theme="dark"] {
+    --tack-bg: #1c1b19;
+    --tack-surface: #25241f;
+    --tack-surface-elevated: #2c2b25;
+    --tack-surface-overlay: rgba(0, 0, 0, 0.5);
+    --tack-fg: #f3f2ee;
+    --tack-fg-muted: #aeada6;
+    --tack-fg-subtle: #6e6c66;
+    --tack-border: #3a3934;
+    --tack-border-strong: #524f48;
+    --tack-accent: #50c47e;
+    --tack-accent-strong: #6fd996;
+    --tack-accent-soft: rgba(80, 196, 126, 0.18);
+    --tack-fg-on-accent: #1c1b19;
+    --tack-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --tack-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+    --tack-shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.18);
+  }
+  @media (prefers-color-scheme: dark) {
+    [data-tack-widget]:not([data-tack-scheme]):not([data-tack-theme="light"]):not([data-tack-theme="dark"]) {
+      --tack-bg: #1c1b19;
+      --tack-surface: #25241f;
+      --tack-surface-elevated: #2c2b25;
+      --tack-surface-overlay: rgba(0, 0, 0, 0.5);
+      --tack-fg: #f3f2ee;
+      --tack-fg-muted: #aeada6;
+      --tack-fg-subtle: #6e6c66;
+      --tack-border: #3a3934;
+      --tack-border-strong: #524f48;
+      --tack-accent: #50c47e;
+      --tack-accent-strong: #6fd996;
+      --tack-accent-soft: rgba(80, 196, 126, 0.18);
+      --tack-fg-on-accent: #1c1b19;
+      --tack-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+      --tack-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+      --tack-shadow-lg: 0 24px 64px rgba(0, 0, 0, 0.4), 0 4px 12px rgba(0, 0, 0, 0.18);
+    }
+  }
+}
+
+/*
  * Reduced-motion (DESIGN.md "Motion"). Disable the slide-up entrance and
  * shorten transitions to near-instant.
  */
