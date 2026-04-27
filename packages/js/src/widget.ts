@@ -20,6 +20,7 @@
 // See docs/phase-2-extraction.md "Step 2" for the full spec this is the
 // foundation of.
 
+import type { CaptureHandle } from './console-capture'
 import { TackError, docUrl } from './errors'
 import { applyFontSafety } from './font-safety'
 import { bindHotkey } from './hotkey'
@@ -102,8 +103,19 @@ export interface TackWidgetConfig {
   cancelLabel?: string
   /** Textarea placeholder. Default: "What can we improve?". */
   placeholder?: string
-  /** Called on successful submit, after the dialog closes. */
-  onSubmit?: (result: TackFeedbackCreated) => void
+  /**
+   * Called on successful submit. Receives the server response and the full
+   * request payload that was sent. The second arg is provided so consumers
+   * can fire their own analytics on submission contents (e.g. "user gave
+   * 5 stars") without having to track that state themselves.
+   *
+   * Backwards compatible: existing `(result) => void` callers ignore the
+   * second arg.
+   */
+  onSubmit?: (
+    result: TackFeedbackCreated,
+    request: TackSubmitRequest,
+  ) => void
   /** Called on submit failure. The dialog stays open. */
   onError?: (err: TackError) => void
   /** Called whenever the dialog opens (open() invocation that actually shows). */
@@ -197,6 +209,67 @@ export interface TackWidgetConfig {
    * under its size cap.
    */
   captureScreenshot?: ((el: Element) => Promise<string>) | false
+  /**
+   * Host app version, e.g. "1.4.2" or a git SHA. Sent on every submission
+   * as `appVersion` so feedback can be bucketed by release. No format
+   * constraint — the dashboard treats this as an opaque string.
+   *
+   * Common bundler patterns:
+   *   - Next.js:  `process.env.NEXT_PUBLIC_APP_VERSION`
+   *   - Vite:     `import.meta.env.VITE_APP_VERSION`
+   *   - Custom:   `__APP_VERSION__` (define via webpack/rollup `DefinePlugin`)
+   */
+  appVersion?: string
+  /**
+   * Rating UI variant. When set, renders a control above the textarea and
+   * sends the selected value as `rating` on submission. Also auto-attaches
+   * `metadata.ratingScale` so the dashboard can label the value
+   * unambiguously (4 of 5 stars vs 4 of 4 emoji vs +1 thumbs).
+   *   - `false` (default) — no rating UI, no `rating` in the request
+   *   - `'thumbs'` — 👍 / 👎, sends `+1` or `-1`
+   *   - `'stars'` — 1-5 stars, sends `1..5`
+   *   - `'emoji'` — 😞 😐 🙂 😄, sends `1..4`
+   */
+  rating?: false | 'thumbs' | 'stars' | 'emoji'
+  /**
+   * Capture host console output and attach to submissions in
+   * `metadata.console`. Off by default. Privacy footgun — read the README
+   * before enabling. The captured buffer is per-widget (no cross-widget
+   * leakage) and the host's existing console wrappers (Sentry, Datadog) are
+   * preserved on uninstall via wrapper-identity check.
+   *
+   *   - `false` (default) — no patching, no capture
+   *   - `true` — capture `error` + `warn`, last 20 entries, default config
+   *   - object — fine-grained: `{ levels: ['error', 'warn'], maxEntries: 50 }`
+   *
+   * Inspect what's been captured at any point via `handle.getCapturedConsole()`
+   * — useful in dev mode to verify nothing sensitive will ship.
+   */
+  captureConsole?: boolean | CaptureConsoleConfig
+}
+
+/**
+ * Console-capture configuration. Named + exported so TypeScript autocomplete
+ * reveals the shape on `{` keystroke and consumers can reference the type
+ * from their own code.
+ */
+export interface CaptureConsoleConfig {
+  /** Console levels to capture. Default: `['error', 'warn']`. */
+  levels?: ('error' | 'warn' | 'info' | 'log')[]
+  /** Maximum entries kept in the buffer (FIFO eviction). Default: 20. */
+  maxEntries?: number
+}
+
+/**
+ * One captured console entry. Returned from `handle.getCapturedConsole()`
+ * and shipped as `metadata.console[]` on submissions.
+ */
+export interface ConsoleEntry {
+  level: 'error' | 'warn' | 'info' | 'log'
+  /** Wall-clock timestamp at capture (ms since epoch). */
+  ts: number
+  /** Serialized arg list. Each arg is rendered safely (cycles, errors, DOM, depth-capped). */
+  msg: string
 }
 
 export interface TackHandle {
@@ -210,6 +283,15 @@ export interface TackHandle {
   isOpen: () => boolean
   /** Remove the dialog, abort in-flight submit, drop refs. Idempotent. */
   destroy: () => void
+  /**
+   * Snapshot of the console buffer for THIS widget instance. Returns a copy
+   * (not a live reference); safe to log or pass through analytics. Returns
+   * `[]` when `captureConsole` is off or no entries have been captured yet.
+   *
+   * Useful in dev mode to verify what would ship before enabling capture in
+   * production: `console.log(handle.getCapturedConsole())`.
+   */
+  getCapturedConsole: () => ConsoleEntry[]
   /**
    * Update mutable config fields without re-mounting the dialog. Use for
    * data that may legitimately change on re-renders (current user, page
@@ -290,6 +372,45 @@ function warnDeprecatedOnce(key: string, message: string): void {
   _deprecationWarned.add(key)
   if (typeof console !== 'undefined' && typeof console.warn === 'function') {
     console.warn(`[tack] ${message}`)
+  }
+}
+
+interface RatingOption {
+  /** Display label inside the button. */
+  label: string
+  /** Numeric value sent on submission. Per spec: ±1 for thumbs, 1..5 for stars, 1..4 for emoji. */
+  value: number
+  /** aria-label for screen readers. */
+  aria: string
+}
+
+/**
+ * Render-time button list for each rating variant. Single source of truth so
+ * test expectations and DOM render stay in sync. Order matters — emoji and
+ * stars render lowest-on-the-left, thumbs renders thumbs-down-on-the-left.
+ */
+function ratingOptionsFor(
+  variant: 'thumbs' | 'stars' | 'emoji',
+): RatingOption[] {
+  switch (variant) {
+    case 'thumbs':
+      return [
+        { label: '👎', value: -1, aria: 'Thumbs down' },
+        { label: '👍', value: 1, aria: 'Thumbs up' },
+      ]
+    case 'stars':
+      return [1, 2, 3, 4, 5].map((n) => ({
+        label: '★',
+        value: n,
+        aria: `${n} ${n === 1 ? 'star' : 'stars'}`,
+      }))
+    case 'emoji':
+      return [
+        { label: '😞', value: 1, aria: 'Bad' },
+        { label: '😐', value: 2, aria: 'Meh' },
+        { label: '🙂', value: 3, aria: 'Good' },
+        { label: '😄', value: 4, aria: 'Great' },
+      ]
   }
 }
 
@@ -394,6 +515,27 @@ interface InternalState {
    * re-attach a screenshot the user explicitly discarded.
    */
   captureGen: number
+  /**
+   * Rating row container (S-extension). Null when `rating: false` (the
+   * default — no rating UI). Hidden in success state via CSS.
+   */
+  ratingRow: HTMLDivElement | null
+  /**
+   * Rating option buttons keyed by their numeric value. Click handler flips
+   * aria-pressed + stores `state.rating`. Empty when rating is disabled.
+   */
+  ratingButtons: HTMLButtonElement[]
+  /**
+   * Currently selected rating value, or null. Cleared by Cancel/ESC/close
+   * and after successful submit. Sent as `rating` on the request body when
+   * non-null.
+   */
+  rating: number | null
+  /**
+   * Per-widget console-capture handle. Null when `captureConsole: false`.
+   * snapshot() reads the buffer; uninstall() is called on destroy.
+   */
+  captureHandle: CaptureHandle | null
 }
 
 /**
@@ -437,6 +579,7 @@ function init(config: TackWidgetConfig): TackHandle {
       isOpen: () => false,
       destroy() {},
       update() {},
+      getCapturedConsole: () => [],
     }
   }
 
@@ -478,6 +621,28 @@ function init(config: TackWidgetConfig): TackHandle {
     capturePreview: null,
     capturedScreenshot: null,
     captureGen: 0,
+    ratingRow: null,
+    ratingButtons: [],
+    rating: null,
+    // Console capture installs lazily — the module is dynamic-imported so
+    // the main bundle stays under cap. Trade: errors thrown in the few ms
+    // between widget mount and import resolution aren't captured. Acceptable
+    // because the widget is brand-new at that moment; the feedback flow
+    // hasn't started.
+    captureHandle: null,
+  }
+  const consoleConfig = config.captureConsole
+  if (consoleConfig) {
+    void (async () => {
+      try {
+        const { installConsoleCapture } = await import('./console-capture')
+        if (state.destroyed) return
+        state.captureHandle = installConsoleCapture(consoleConfig)
+      } catch {
+        // Lazy import failed (offline + uncached, network glitch). Don't
+        // surface — capture is opt-in and best-effort.
+      }
+    })()
   }
 
   function ensureMounted(): HTMLDialogElement {
@@ -540,6 +705,50 @@ function init(config: TackWidgetConfig): TackHandle {
     titleEl.setAttribute('data-tack-title', '')
     titleEl.id = `tack-title-${nextDialogId()}`
     dialog.setAttribute('aria-labelledby', titleEl.id)
+
+    // Rating row (optional). Renders a row of buttons above the textarea.
+    // Button count + label per variant; click flips aria-pressed + stores
+    // numeric value on state.rating. The state is read at submit time and
+    // attached as `rating` + `metadata.ratingScale` on the request.
+    const ratingVariant = state.config.rating
+    let ratingRow: HTMLDivElement | null = null
+    const ratingButtons: HTMLButtonElement[] = []
+    if (ratingVariant) {
+      const options = ratingOptionsFor(ratingVariant)
+      ratingRow = document.createElement('div')
+      ratingRow.setAttribute('data-tack-rating-row', '')
+      ratingRow.setAttribute('data-tack-rating-variant', ratingVariant)
+      ratingRow.setAttribute('role', 'group')
+      ratingRow.setAttribute('aria-label', 'Rating')
+      for (const opt of options) {
+        const btn = document.createElement('button')
+        btn.type = 'button'
+        btn.textContent = opt.label
+        btn.setAttribute('data-tack-rating-option', '')
+        btn.setAttribute('data-tack-rating-value', String(opt.value))
+        btn.setAttribute('aria-label', opt.aria)
+        btn.setAttribute('aria-pressed', 'false')
+        btn.addEventListener('click', () => {
+          if (state.destroyed) return
+          // Toggle: clicking the active button clears the selection. Lets
+          // users undo without forcing them to pick a different value.
+          if (state.rating === opt.value) {
+            state.rating = null
+            for (const b of state.ratingButtons) b.setAttribute('aria-pressed', 'false')
+            return
+          }
+          state.rating = opt.value
+          for (const b of state.ratingButtons) {
+            b.setAttribute(
+              'aria-pressed',
+              b === btn ? 'true' : 'false',
+            )
+          }
+        })
+        ratingRow.append(btn)
+        ratingButtons.push(btn)
+      }
+    }
 
     const textarea = document.createElement('textarea')
     textarea.required = true
@@ -630,11 +839,15 @@ function init(config: TackWidgetConfig): TackHandle {
     submitBtn.setAttribute('data-tack-submit', '')
 
     actions.append(cancelBtn, retryBtn, submitBtn)
-    if (captureRow) {
-      form.append(titleEl, textarea, captureRow, statusEl, docLink, actions)
-    } else {
-      form.append(titleEl, textarea, statusEl, docLink, actions)
-    }
+    // Form composition. Order: title → rating (optional) → textarea →
+    // capture (optional) → status → docLink → actions. Rating sits above
+    // textarea so the user picks a sentiment, then writes the explanation.
+    const formChildren: Node[] = [titleEl]
+    if (ratingRow) formChildren.push(ratingRow)
+    formChildren.push(textarea)
+    if (captureRow) formChildren.push(captureRow)
+    formChildren.push(statusEl, docLink, actions)
+    form.append(...formChildren)
     dialog.append(form)
     shadow.append(dialog)
 
@@ -646,6 +859,8 @@ function init(config: TackWidgetConfig): TackHandle {
     state.docLink = docLink
     state.captureBtn = captureBtn
     state.capturePreview = capturePreview
+    state.ratingRow = ratingRow
+    state.ratingButtons = ratingButtons
 
     if (captureBtn) {
       captureBtn.addEventListener('click', () => {
@@ -983,6 +1198,12 @@ function init(config: TackWidgetConfig): TackHandle {
   function resetDialogState(): void {
     if (state.textarea) state.textarea.value = ''
     clearCapturedScreenshot()
+    // Clear rating selection too — Cancel / ESC / backdrop are "discard
+    // this draft" gestures; the rating is part of the draft.
+    state.rating = null
+    for (const btn of state.ratingButtons) {
+      btn.setAttribute('aria-pressed', 'false')
+    }
     // Bump the generation so any in-flight capture promise bails on resolve
     // instead of re-attaching a screenshot the user just discarded.
     state.captureGen++
@@ -1023,15 +1244,37 @@ function init(config: TackWidgetConfig): TackHandle {
     const abortSignal = state.abort.signal
 
     const defaults = browserDefaults()
+    // Build metadata: user-provided keys come first, then SDK-attached keys
+    // overwrite (ratingScale, console). Putting ours last means the user
+    // can't accidentally clobber the auto-attached values — the variant they
+    // configured IS the truth for ratingScale, and the captured buffer IS
+    // the source for console.
+    const metadata: Record<string, unknown> = {
+      ...(state.config.metadata ?? {}),
+    }
+    if (state.config.rating && state.rating !== null) {
+      // Auto-attach the scale label so dashboard can disambiguate
+      // `rating: 4` (4 stars vs 4 emoji vs invalid for thumbs).
+      metadata.ratingScale = state.config.rating
+    }
+    if (state.captureHandle) {
+      const consoleEntries = state.captureHandle.snapshot()
+      if (consoleEntries.length > 0) metadata.console = consoleEntries
+    }
     const req: TackSubmitRequest = {
       projectId: state.config.projectId,
       body,
       screenshot,
+      rating:
+        state.config.rating && state.rating !== null
+          ? state.rating
+          : undefined,
+      appVersion: state.config.appVersion,
       url: defaults.url,
       userAgent: defaults.userAgent,
       viewport: defaults.viewport,
       user: state.config.user,
-      metadata: state.config.metadata,
+      metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
     }
 
     try {
@@ -1055,7 +1298,10 @@ function init(config: TackWidgetConfig): TackHandle {
       // auto-close), THEN fire the user callback. Order matters: a slow
       // onSubmit handler shouldn't delay the visible success state.
       transitionTo('success', { result })
-      state.config.onSubmit?.(result)
+      // Pass both the server response AND the request payload — consumers
+      // who want to fire their own analytics on submission contents (rating
+      // value, screenshot inclusion, etc.) need the request, not the result.
+      state.config.onSubmit?.(result, req)
     } catch (err) {
       if (state.destroyed || abortSignal.aborted) return
       const tackErr =
@@ -1179,6 +1425,11 @@ function init(config: TackWidgetConfig): TackHandle {
     }
     unbindHotkey?.()
     unbindHotkey = null
+    // Uninstall console capture before removing the host so the wrapper-
+    // identity check sees our function still in console[level] (or doesn't,
+    // if Sentry stacked on top — in which case we leave their patch alone).
+    state.captureHandle?.uninstall()
+    state.captureHandle = null
     // Removing the host cascades: shadow root, dialog, listeners, all gone.
     // Native <dialog> in the top layer is implicitly closed when its
     // containing shadow tree is removed from the document.
@@ -1206,7 +1457,11 @@ function init(config: TackWidgetConfig): TackHandle {
     if ('onClose' in partial) state.config.onClose = partial.onClose
   }
 
-  return { open, close, toggle, isOpen, destroy, update }
+  function getCapturedConsole(): ConsoleEntry[] {
+    return state.captureHandle?.snapshot() ?? []
+  }
+
+  return { open, close, toggle, isOpen, destroy, update, getCapturedConsole }
 }
 
 // Monotonic counter for unique element ids — collision-free across the
@@ -1539,8 +1794,43 @@ const TACK_DEFAULT_CSS = `
 [data-tack-widget][data-tack-state="success"] [data-tack-title],
 [data-tack-widget][data-tack-state="success"] [data-tack-input],
 [data-tack-widget][data-tack-state="success"] [data-tack-capture-row],
+[data-tack-widget][data-tack-state="success"] [data-tack-rating-row],
 [data-tack-widget][data-tack-state="success"] [data-tack-actions] {
   display: none;
+}
+/* Rating row (S-extension). A row of buttons above the textarea — thumbs
+   (2), stars (5), or emoji (4). Selected state via aria-pressed=true. */
+[data-tack-widget] [data-tack-rating-row] {
+  display: flex;
+  gap: var(--tack-space-xs);
+  flex-wrap: wrap;
+}
+[data-tack-widget] [data-tack-rating-option] {
+  background: transparent;
+  color: var(--tack-fg-muted);
+  border: 1px solid var(--tack-border);
+  font-size: var(--tack-text-base);
+  padding: 6px 10px;
+  min-width: var(--tack-tap-target);
+  min-height: var(--tack-tap-target);
+  line-height: 1;
+}
+[data-tack-widget] [data-tack-rating-option]:hover {
+  border-color: var(--tack-accent);
+  background: var(--tack-accent-soft);
+}
+[data-tack-widget] [data-tack-rating-option][aria-pressed="true"] {
+  border-color: var(--tack-accent);
+  background: var(--tack-accent-soft);
+  color: var(--tack-accent-strong);
+}
+/* Stars variant: grouped together visually. */
+[data-tack-widget] [data-tack-rating-row][data-tack-rating-variant="stars"] {
+  gap: 2px;
+}
+[data-tack-widget] [data-tack-rating-row][data-tack-rating-variant="stars"] [data-tack-rating-option] {
+  padding: 4px 6px;
+  font-size: var(--tack-text-lg);
 }
 [data-tack-widget][data-tack-state="error_retryable"] [data-tack-status],
 [data-tack-widget][data-tack-state="error_docs"] [data-tack-status],

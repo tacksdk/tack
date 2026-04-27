@@ -42,7 +42,10 @@ Floating launcher button. Mounts into `document.body` (fixed-positioned) or inli
 | `inline` | `boolean` | `false` | Render in document flow instead of floating. |
 | `theme` | `'auto' \| 'light' \| 'dark'` | `'dark'` | Color scheme. |
 | `hotkey` | `string` | | Toggle shortcut (e.g. `'mod+alt+f'`). |
-| `onSubmit` | `() => void` | | Called after successful submit. |
+| `appVersion` | `string` | | Host app version. Use bundler-injected (`process.env.NEXT_PUBLIC_APP_VERSION`, `import.meta.env.VITE_APP_VERSION`, or a custom `__APP_VERSION__`). |
+| `rating` | `false \| 'thumbs' \| 'stars' \| 'emoji'` | `false` | Rating UI variant. Sends `rating` + `metadata.ratingScale` on submit. |
+| `captureConsole` | `boolean \| CaptureConsoleConfig` | `false` | Capture host console output. **Privacy footgun — see [@tacksdk/js README](https://www.npmjs.com/package/@tacksdk/js#console-capture-privacy) before enabling.** |
+| `onSubmit` | `(request: TackSubmitRequest) => void` | | Called after successful submit; receives the request payload (rating, screenshot, console, etc.) so you can fire your own analytics without re-tracking state. |
 | `onError` | `(err: TackError) => void` | | Called on submit failure. |
 
 Plus all `<TackWidget>` props (`title`, `submitLabel`, `cancelLabel`, `placeholder`, `user`, `metadata`, `injectStyles`, ...).

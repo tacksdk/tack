@@ -266,11 +266,12 @@ describe('Tack widget', () => {
         'X-Tack-SDK-Version': expect.any(String),
         'Idempotency-Key': expect.any(String),
       })
-      expect(onSubmit).toHaveBeenCalledWith({
-        id: 'fbk_1',
-        url: 'https://x',
-        created_at: '2026-01-01',
-      })
+      // onSubmit now receives (result, request) — second arg is the payload
+      // we sent. Existing callers ignore the second arg and still work.
+      expect(onSubmit).toHaveBeenCalledWith(
+        { id: 'fbk_1', url: 'https://x', created_at: '2026-01-01' },
+        expect.objectContaining({ projectId: 'proj_test', body: 'great app' }),
+      )
       // Textarea cleared, dialog still OPEN with success state showing the
       // confirmation message (per FSM spec — success auto-closes after a beat
       // so the user sees the acknowledgement).
@@ -1293,6 +1294,375 @@ describe('Tack widget', () => {
       expect(reopenedPreview.hidden).toBe(true)
       expect(reopenedBtn.textContent).toBe('Add screenshot')
       handle.destroy()
+    })
+  })
+
+  describe('appVersion', () => {
+    function mockSubmitOk() {
+      const fetchMock = vi.fn(async () =>
+        ({
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({ id: 'fbk_1', url: 'x', created_at: 'x' }),
+        }) as unknown as Response,
+      )
+      vi.stubGlobal('fetch', fetchMock)
+      return fetchMock
+    }
+
+    it('appVersion lands in the request body when set', async () => {
+      const fetchMock = mockSubmitOk()
+      const handle = Tack.init({
+        projectId: 'proj_test',
+        appVersion: 'v1.4.2-abc123',
+      })
+      handle.open()
+      inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'great'
+      inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+      await flush()
+      const sent = JSON.parse(
+        (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string,
+      )
+      expect(sent.appVersion).toBe('v1.4.2-abc123')
+      handle.destroy()
+    })
+
+    it('appVersion is omitted when not set', async () => {
+      const fetchMock = mockSubmitOk()
+      const handle = Tack.init({ projectId: 'proj_test' })
+      handle.open()
+      inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
+      inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+      await flush()
+      const sent = JSON.parse(
+        (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string,
+      )
+      expect(sent.appVersion).toBeUndefined()
+      handle.destroy()
+    })
+  })
+
+  describe('rating UI', () => {
+    function mockSubmitOk() {
+      const fetchMock = vi.fn(async () =>
+        ({
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({ id: 'fbk_1', url: 'x', created_at: 'x' }),
+        }) as unknown as Response,
+      )
+      vi.stubGlobal('fetch', fetchMock)
+      return fetchMock
+    }
+
+    it('rating: false (default) renders no rating row', () => {
+      const handle = Tack.init({ projectId: 'proj_test' })
+      handle.open()
+      expect(inShadow('[data-tack-rating-row]')).toBeNull()
+      handle.destroy()
+    })
+
+    it("rating: 'thumbs' renders 2 buttons", () => {
+      const handle = Tack.init({ projectId: 'proj_test', rating: 'thumbs' })
+      handle.open()
+      const buttons = widgetShadow()!.querySelectorAll('[data-tack-rating-option]')
+      expect(buttons.length).toBe(2)
+      const values = Array.from(buttons).map((b) =>
+        b.getAttribute('data-tack-rating-value'),
+      )
+      expect(values).toEqual(['-1', '1'])
+      handle.destroy()
+    })
+
+    it("rating: 'stars' renders 5 buttons (1..5)", () => {
+      const handle = Tack.init({ projectId: 'proj_test', rating: 'stars' })
+      handle.open()
+      const buttons = widgetShadow()!.querySelectorAll('[data-tack-rating-option]')
+      expect(buttons.length).toBe(5)
+      const values = Array.from(buttons).map((b) =>
+        b.getAttribute('data-tack-rating-value'),
+      )
+      expect(values).toEqual(['1', '2', '3', '4', '5'])
+      handle.destroy()
+    })
+
+    it("rating: 'emoji' renders 4 buttons (1..4)", () => {
+      const handle = Tack.init({ projectId: 'proj_test', rating: 'emoji' })
+      handle.open()
+      const buttons = widgetShadow()!.querySelectorAll('[data-tack-rating-option]')
+      expect(buttons.length).toBe(4)
+      const values = Array.from(buttons).map((b) =>
+        b.getAttribute('data-tack-rating-value'),
+      )
+      expect(values).toEqual(['1', '2', '3', '4'])
+      handle.destroy()
+    })
+
+    it('clicking a rating option flips aria-pressed and stores value', () => {
+      const handle = Tack.init({ projectId: 'proj_test', rating: 'stars' })
+      handle.open()
+      const buttons = Array.from(
+        widgetShadow()!.querySelectorAll<HTMLButtonElement>('[data-tack-rating-option]'),
+      )
+      buttons[3].click()
+      expect(buttons[3].getAttribute('aria-pressed')).toBe('true')
+      for (let i = 0; i < buttons.length; i++) {
+        if (i === 3) continue
+        expect(buttons[i].getAttribute('aria-pressed')).toBe('false')
+      }
+      handle.destroy()
+    })
+
+    it('clicking the same option toggles it off', () => {
+      const handle = Tack.init({ projectId: 'proj_test', rating: 'stars' })
+      handle.open()
+      const buttons = Array.from(
+        widgetShadow()!.querySelectorAll<HTMLButtonElement>('[data-tack-rating-option]'),
+      )
+      buttons[2].click()
+      expect(buttons[2].getAttribute('aria-pressed')).toBe('true')
+      buttons[2].click()
+      expect(buttons[2].getAttribute('aria-pressed')).toBe('false')
+      handle.destroy()
+    })
+
+    it('rating value + ratingScale are sent on submit', async () => {
+      const fetchMock = mockSubmitOk()
+      const handle = Tack.init({ projectId: 'proj_test', rating: 'stars' })
+      handle.open()
+      const buttons = Array.from(
+        widgetShadow()!.querySelectorAll<HTMLButtonElement>('[data-tack-rating-option]'),
+      )
+      buttons[4].click()
+      inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'amazing'
+      inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+      await flush()
+      const sent = JSON.parse(
+        (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string,
+      )
+      expect(sent.rating).toBe(5)
+      expect(sent.metadata?.ratingScale).toBe('stars')
+      handle.destroy()
+    })
+
+    it('no rating selection → no rating in request, no ratingScale', async () => {
+      const fetchMock = mockSubmitOk()
+      const handle = Tack.init({ projectId: 'proj_test', rating: 'stars' })
+      handle.open()
+      inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
+      inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+      await flush()
+      const sent = JSON.parse(
+        (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string,
+      )
+      expect(sent.rating).toBeUndefined()
+      expect(sent.metadata?.ratingScale).toBeUndefined()
+      handle.destroy()
+    })
+
+    it('Cancel clears rating selection', () => {
+      const handle = Tack.init({ projectId: 'proj_test', rating: 'thumbs' })
+      handle.open()
+      const buttons = Array.from(
+        widgetShadow()!.querySelectorAll<HTMLButtonElement>('[data-tack-rating-option]'),
+      )
+      buttons[1].click()
+      expect(buttons[1].getAttribute('aria-pressed')).toBe('true')
+      inShadow<HTMLButtonElement>('[data-tack-cancel]')!.click()
+      handle.open()
+      const reopened = Array.from(
+        widgetShadow()!.querySelectorAll<HTMLButtonElement>('[data-tack-rating-option]'),
+      )
+      for (const b of reopened) {
+        expect(b.getAttribute('aria-pressed')).toBe('false')
+      }
+      handle.destroy()
+    })
+
+    it('user-supplied metadata is preserved alongside ratingScale', async () => {
+      const fetchMock = mockSubmitOk()
+      const handle = Tack.init({
+        projectId: 'proj_test',
+        rating: 'thumbs',
+        metadata: { page: '/checkout', plan: 'pro' },
+      })
+      handle.open()
+      const buttons = Array.from(
+        widgetShadow()!.querySelectorAll<HTMLButtonElement>('[data-tack-rating-option]'),
+      )
+      buttons[1].click()
+      inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
+      inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+      await flush()
+      const sent = JSON.parse(
+        (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string,
+      )
+      expect(sent.metadata).toEqual({
+        page: '/checkout',
+        plan: 'pro',
+        ratingScale: 'thumbs',
+      })
+      handle.destroy()
+    })
+  })
+
+  describe('onSubmit second-arg (request payload)', () => {
+    it('onSubmit receives both result and request', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () =>
+          ({
+            ok: true,
+            status: 200,
+            text: async () =>
+              JSON.stringify({ id: 'fbk_1', url: 'x', created_at: 'x' }),
+          }) as unknown as Response,
+        ),
+      )
+      const onSubmit = vi.fn()
+      const handle = Tack.init({
+        projectId: 'proj_test',
+        rating: 'stars',
+        onSubmit,
+      })
+      handle.open()
+      const buttons = Array.from(
+        widgetShadow()!.querySelectorAll<HTMLButtonElement>('[data-tack-rating-option]'),
+      )
+      buttons[3].click()
+      inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'great'
+      inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+      await flush()
+      expect(onSubmit).toHaveBeenCalledOnce()
+      const [result, req] = onSubmit.mock.calls[0] as unknown as [
+        unknown,
+        { rating: number },
+      ]
+      expect(result).toMatchObject({ id: 'fbk_1' })
+      expect(req.rating).toBe(4)
+      handle.destroy()
+    })
+  })
+
+  describe('console capture (lazy)', () => {
+    it('captureConsole: false → handle.getCapturedConsole returns []', () => {
+      const handle = Tack.init({ projectId: 'proj_test' })
+      expect(handle.getCapturedConsole()).toEqual([])
+      handle.destroy()
+    })
+
+    it('captureConsole: true → buffers errors after lazy import resolves', async () => {
+      // Mock console.error BEFORE init so the widget's wrapper wraps our mock
+      // (jsdom otherwise prints to test stderr).
+      const native = console.error
+      const captured = vi.fn()
+      console.error = captured as typeof console.error
+      try {
+        const handle = Tack.init({
+          projectId: 'proj_test',
+          captureConsole: true,
+        })
+        // Wait for the dynamic import + install to land.
+        await new Promise((r) => setTimeout(r, 50))
+        // Now console.error is tack-wrapper → captured. Calling fires both.
+        console.error('boom')
+        const buffer = handle.getCapturedConsole()
+        expect(buffer.length).toBeGreaterThan(0)
+        expect(buffer[buffer.length - 1].level).toBe('error')
+        expect(buffer[buffer.length - 1].msg).toMatch(/boom/)
+        // Passthrough preserved
+        expect(captured).toHaveBeenCalledWith('boom')
+        handle.destroy()
+      } finally {
+        console.error = native
+      }
+    })
+
+    it('per-widget buffer: each widget tracks independently', async () => {
+      const native = console.error
+      console.error = (() => {}) as typeof console.error
+      try {
+        const a = Tack.init({ projectId: 'proj_a', captureConsole: true })
+        const b = Tack.init({ projectId: 'proj_b', captureConsole: true })
+        await new Promise((r) => setTimeout(r, 50))
+        // console.error is now: bWrapper → aWrapper → mute
+        // Each wrapper records to its own buffer, then calls through.
+        console.error('shared')
+        expect(a.getCapturedConsole().length).toBe(1)
+        expect(b.getCapturedConsole().length).toBe(1)
+        a.destroy()
+        // After A's destroy, B's wrapper is still on top — and it called
+        // through to A's wrapper at install time, but A is now uninstalled.
+        // The wrapper-identity check left the chain alone.
+        console.error('only-b')
+        expect(b.getCapturedConsole().length).toBe(2)
+        b.destroy()
+      } finally {
+        console.error = native
+      }
+    })
+
+    it('captureConsole entries land in metadata.console on submit', async () => {
+      const fetchMock = vi.fn(async () =>
+        ({
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({ id: 'fbk_1', url: 'x', created_at: 'x' }),
+        }) as unknown as Response,
+      )
+      vi.stubGlobal('fetch', fetchMock)
+      const native = console.error
+      console.error = (() => {}) as typeof console.error
+      try {
+        const handle = Tack.init({
+          projectId: 'proj_test',
+          captureConsole: true,
+        })
+        await new Promise((r) => setTimeout(r, 50))
+        console.error('payload-test')
+        handle.open()
+        inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
+        inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+        await flush()
+        const sent = JSON.parse(
+          (fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string,
+        )
+        expect(Array.isArray(sent.metadata?.console)).toBe(true)
+        expect(sent.metadata.console.length).toBeGreaterThan(0)
+        expect(
+          sent.metadata.console[sent.metadata.console.length - 1].msg,
+        ).toMatch(/payload-test/)
+        handle.destroy()
+      } finally {
+        console.error = native
+      }
+    })
+
+    it('late-wrap defense: leaves a Sentry-style wrapper intact on uninstall', async () => {
+      const native = console.error
+      console.error = (() => {}) as typeof console.error
+      try {
+        const handle = Tack.init({
+          projectId: 'proj_test',
+          captureConsole: true,
+        })
+        await new Promise((r) => setTimeout(r, 50))
+        const tackWrapper = console.error
+        // Simulate a late-initializing observability lib wrapping on top.
+        const sentryWrap = ((...args: unknown[]) => {
+          ;(tackWrapper as (...a: unknown[]) => void)(...args)
+        }) as typeof console.error
+        console.error = sentryWrap
+        handle.destroy()
+        // Identity check: our uninstall sees console.error !== tackWrapper
+        // (sentryWrap is on top), so it leaves the chain alone.
+        expect(console.error).toBe(sentryWrap)
+      } finally {
+        console.error = native
+      }
     })
   })
 
