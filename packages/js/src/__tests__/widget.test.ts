@@ -1,11 +1,81 @@
-// Real DOM tests for the walking-skeleton widget. Runs under jsdom — see
+// Real DOM tests for the closed-shadow-DOM widget. Runs under jsdom — see
 // vitest.config.ts. Covers handle shape, mount/unmount lifecycle, two
-// independent instances, abort-on-cancel, and post-destroy callback
-// suppression. Network is mocked.
+// independent instances, abort-on-cancel, post-destroy callback suppression,
+// shadow root style isolation. Network is mocked.
+//
+// The widget mounts inside a closed shadow root, so `host.shadowRoot`
+// returns null from outside. Tests reach the root via `__testShadowRoots`
+// (a WeakMap exported from widget.ts as a test affordance — production
+// callers cannot reach it). Helpers below wrap that lookup so individual
+// test bodies stay readable.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { Tack } from '../widget'
+import { Tack, __testShadowRoots } from '../widget'
+
+function shadowOf(host: Element): ShadowRoot {
+  const root = __testShadowRoots.get(host)
+  if (!root) throw new Error('No shadow root registered for host element')
+  return root
+}
+
+/** Find the (single) widget shadow root in the document, or null. */
+function widgetShadow(): ShadowRoot | null {
+  const host = document.querySelector('tack-widget-host')
+  return host ? shadowOf(host) : null
+}
+
+/** Find the (single) widget dialog in the document, or null. */
+function getDialog(): HTMLDialogElement | null {
+  return widgetShadow()?.querySelector<HTMLDialogElement>('dialog[data-tack-widget]') ?? null
+}
+
+/** Collect all widget dialogs across all hosts. */
+function getAllDialogs(): HTMLDialogElement[] {
+  return Array.from(document.querySelectorAll('tack-widget-host')).flatMap((h) => {
+    const root = __testShadowRoots.get(h)
+    if (!root) return []
+    return Array.from(
+      root.querySelectorAll<HTMLDialogElement>('dialog[data-tack-widget]'),
+    )
+  })
+}
+
+/** Count widget dialogs across all hosts. */
+function countDialogs(): number {
+  return getAllDialogs().length
+}
+
+/** Find an element inside the (single) widget shadow root by selector. */
+function inShadow<E extends Element = Element>(selector: string): E | null {
+  return widgetShadow()?.querySelector<E>(selector) ?? null
+}
+
+/**
+ * True when a shadow root has the default Tack stylesheet attached, by either
+ * path: (a) `adoptedStyleSheets` contains a sheet whose serialized cssText
+ * mentions `--tack-bg` (the constructable-stylesheet path), or (b) a child
+ * `<style>` element contains it (the Safari-fallback path).
+ */
+function hasTackStyles(shadow: ShadowRoot): boolean {
+  const adopted = (shadow as unknown as { adoptedStyleSheets?: CSSStyleSheet[] })
+    .adoptedStyleSheets
+  if (adopted && adopted.length > 0) {
+    for (const sheet of adopted) {
+      try {
+        const cssText = Array.from(sheet.cssRules)
+          .map((r) => r.cssText)
+          .join('\n')
+        if (cssText.includes('--tack-bg')) return true
+      } catch {
+        // Some test environments don't expose cssRules; treat presence as proof
+        return true
+      }
+    }
+  }
+  const style = shadow.querySelector('style[data-tack-styles]')
+  return !!style?.textContent?.includes('--tack-bg')
+}
 
 function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0))
@@ -54,55 +124,62 @@ describe('Tack widget', () => {
     expect(typeof handle.destroy).toBe('function')
   })
 
-  it('open() mounts a <dialog> and showModal()s it', () => {
+  it('open() mounts a <dialog> inside a shadow host and showModal()s it', () => {
     const handle = Tack.init({ projectId: 'proj_test' })
-    expect(document.querySelector('dialog[data-tack-widget]')).toBeNull()
+    expect(document.querySelector('tack-widget-host')).toBeNull()
     handle.open()
-    const dialog = document.querySelector<HTMLDialogElement>('dialog[data-tack-widget]')
+    expect(document.querySelector('tack-widget-host')).not.toBeNull()
+    const dialog = getDialog()
     expect(dialog).not.toBeNull()
     expect(dialog!.open).toBe(true)
     handle.destroy()
   })
 
-  it('open() is idempotent — second call does not duplicate the dialog', () => {
+  it('open() is idempotent — second call does not duplicate the host or dialog', () => {
     const handle = Tack.init({ projectId: 'proj_test' })
     handle.open()
     handle.open()
-    expect(document.querySelectorAll('dialog[data-tack-widget]')).toHaveLength(1)
+    expect(document.querySelectorAll('tack-widget-host')).toHaveLength(1)
+    expect(countDialogs()).toBe(1)
     handle.destroy()
   })
 
-  it('close() closes the dialog without removing it', () => {
+  it('close() closes the dialog without removing the host', () => {
     const handle = Tack.init({ projectId: 'proj_test' })
     handle.open()
     handle.close()
-    const dialog = document.querySelector<HTMLDialogElement>('dialog[data-tack-widget]')
+    expect(document.querySelector('tack-widget-host')).not.toBeNull()
+    const dialog = getDialog()
     expect(dialog).not.toBeNull()
     expect(dialog!.open).toBe(false)
     handle.destroy()
   })
 
-  it('destroy() removes the dialog and is idempotent', () => {
+  it('destroy() removes the host (cascading shadow + dialog) and is idempotent', () => {
     const handle = Tack.init({ projectId: 'proj_test' })
     handle.open()
     handle.destroy()
-    expect(document.querySelector('dialog[data-tack-widget]')).toBeNull()
+    expect(document.querySelector('tack-widget-host')).toBeNull()
+    expect(countDialogs()).toBe(0)
     expect(() => handle.destroy()).not.toThrow()
     // open() after destroy is a no-op (no remount)
     handle.open()
-    expect(document.querySelector('dialog[data-tack-widget]')).toBeNull()
+    expect(document.querySelector('tack-widget-host')).toBeNull()
   })
 
-  it('two handles mount independent dialogs', () => {
+  it('two handles mount independent shadow hosts and dialogs', () => {
     const a = Tack.init({ projectId: 'proj_a' })
     const b = Tack.init({ projectId: 'proj_b' })
     a.open()
     b.open()
-    expect(document.querySelectorAll('dialog[data-tack-widget]')).toHaveLength(2)
+    expect(document.querySelectorAll('tack-widget-host')).toHaveLength(2)
+    expect(countDialogs()).toBe(2)
     a.destroy()
-    expect(document.querySelectorAll('dialog[data-tack-widget]')).toHaveLength(1)
+    expect(document.querySelectorAll('tack-widget-host')).toHaveLength(1)
+    expect(countDialogs()).toBe(1)
     b.destroy()
-    expect(document.querySelectorAll('dialog[data-tack-widget]')).toHaveLength(0)
+    expect(document.querySelectorAll('tack-widget-host')).toHaveLength(0)
+    expect(countDialogs()).toBe(0)
   })
 
   it('successful submit fires onSubmit, clears textarea, closes dialog', async () => {
@@ -119,9 +196,9 @@ describe('Tack widget', () => {
 
     const handle = Tack.init({ projectId: 'proj_test', onSubmit })
     handle.open()
-    const textarea = document.querySelector<HTMLTextAreaElement>('[data-tack-input]')!
+    const textarea = inShadow<HTMLTextAreaElement>('[data-tack-input]')!
     textarea.value = 'great app'
-    document.querySelector<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+    inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
     await flush()
 
     expect(fetchMock).toHaveBeenCalledOnce()
@@ -138,7 +215,7 @@ describe('Tack widget', () => {
     })
     expect(textarea.value).toBe('')
     expect(
-      document.querySelector<HTMLDialogElement>('dialog[data-tack-widget]')!.open,
+      getDialog()!.open,
     ).toBe(false)
     handle.destroy()
   })
@@ -161,14 +238,14 @@ describe('Tack widget', () => {
 
     const handle = Tack.init({ projectId: 'proj_test', onError })
     handle.open()
-    document.querySelector<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
-    document.querySelector<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+    inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
+    inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
     await flush()
 
     expect(onError).toHaveBeenCalledOnce()
     expect(onError.mock.calls[0][0].type).toBe('rate_limited')
     expect(
-      document.querySelector<HTMLDialogElement>('dialog[data-tack-widget]')!.open,
+      getDialog()!.open,
     ).toBe(true)
     handle.destroy()
   })
@@ -193,8 +270,8 @@ describe('Tack widget', () => {
 
     const handle = Tack.init({ projectId: 'proj_test', onSubmit, onError })
     handle.open()
-    document.querySelector<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
-    document.querySelector<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+    inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
+    inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
     handle.close()
     await flush()
 
@@ -227,8 +304,8 @@ describe('Tack widget', () => {
 
     const handle = Tack.init({ projectId: 'proj_test', onSubmit })
     handle.open()
-    document.querySelector<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
-    document.querySelector<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+    inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
+    inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
     handle.destroy()
     await new Promise((r) => setTimeout(r, 20))
 
@@ -236,32 +313,38 @@ describe('Tack widget', () => {
   })
 
   describe('theming', () => {
-    it('injects the default stylesheet on first open (idempotent)', () => {
+    it('injects the default stylesheet into each shadow root on first open', () => {
       const a = Tack.init({ projectId: 'proj_a' })
       const b = Tack.init({ projectId: 'proj_b' })
-      expect(document.querySelectorAll('style[data-tack-styles]')).toHaveLength(0)
+      // Before opening, no shadow hosts exist anywhere
+      expect(document.querySelectorAll('tack-widget-host')).toHaveLength(0)
       a.open()
       b.open()
-      // One global style block, even with two widgets
-      expect(document.querySelectorAll('style[data-tack-styles]')).toHaveLength(1)
-      const css = document.querySelector('style[data-tack-styles]')!.textContent ?? ''
-      expect(css).toContain('--tack-bg')
-      expect(css).toContain('--tack-accent')
+      // Each widget got its own shadow root, each scoped to that root
+      const hosts = Array.from(document.querySelectorAll('tack-widget-host'))
+      expect(hosts).toHaveLength(2)
+      for (const host of hosts) {
+        const root = __testShadowRoots.get(host)!
+        expect(hasTackStyles(root)).toBe(true)
+      }
+      // No styles leaked into the document <head>
+      expect(document.head.querySelector('style[data-tack-styles]')).toBeNull()
       a.destroy()
       b.destroy()
     })
 
-    it('injectStyles: false skips the stylesheet', () => {
+    it('injectStyles: false skips the stylesheet inside the shadow root', () => {
       const handle = Tack.init({ projectId: 'proj_test', injectStyles: false })
       handle.open()
-      expect(document.querySelector('style[data-tack-styles]')).toBeNull()
+      const root = widgetShadow()!
+      expect(hasTackStyles(root)).toBe(false)
       handle.destroy()
     })
 
     it('theme: "dark" sets data-tack-theme on the dialog', () => {
       const handle = Tack.init({ projectId: 'proj_test', theme: 'dark' })
       handle.open()
-      const dialog = document.querySelector('dialog[data-tack-widget]')!
+      const dialog = getDialog()!
       expect(dialog.getAttribute('data-tack-theme')).toBe('dark')
       handle.destroy()
     })
@@ -269,7 +352,7 @@ describe('Tack widget', () => {
     it('default theme is "dark" per DESIGN.md (sets data-tack-theme="dark")', () => {
       const handle = Tack.init({ projectId: 'proj_test' })
       handle.open()
-      const dialog = document.querySelector('dialog[data-tack-widget]')!
+      const dialog = getDialog()!
       expect(dialog.getAttribute('data-tack-theme')).toBe('dark')
       handle.destroy()
     })
@@ -277,7 +360,7 @@ describe('Tack widget', () => {
     it('theme: "auto" leaves data-tack-theme unset (CSS handles via media query)', () => {
       const handle = Tack.init({ projectId: 'proj_test', theme: 'auto' })
       handle.open()
-      const dialog = document.querySelector('dialog[data-tack-widget]')!
+      const dialog = getDialog()!
       expect(dialog.hasAttribute('data-tack-theme')).toBe(false)
       handle.destroy()
     })
@@ -291,22 +374,27 @@ describe('Tack widget', () => {
         placeholder: 'go on...',
       })
       handle.open()
-      expect(document.querySelector('[data-tack-title]')!.textContent).toBe('Tell us!')
-      expect(document.querySelector('[data-tack-submit]')!.textContent).toBe('Ship it')
-      expect(document.querySelector('[data-tack-cancel]')!.textContent).toBe('Nope')
+      expect(inShadow('[data-tack-title]')!.textContent).toBe('Tell us!')
+      expect(inShadow('[data-tack-submit]')!.textContent).toBe('Ship it')
+      expect(inShadow('[data-tack-cancel]')!.textContent).toBe('Nope')
       expect(
-        document.querySelector<HTMLTextAreaElement>('[data-tack-input]')!.placeholder,
+        inShadow<HTMLTextAreaElement>('[data-tack-input]')!.placeholder,
       ).toBe('go on...')
       handle.destroy()
     })
 
-    it('dialog has aria-labelledby pointing at the title', () => {
+    it('dialog has aria-labelledby pointing at the title (scoped within shadow root)', () => {
       const handle = Tack.init({ projectId: 'proj_test' })
       handle.open()
-      const dialog = document.querySelector('dialog[data-tack-widget]')!
+      const root = widgetShadow()!
+      const dialog = root.querySelector('dialog[data-tack-widget]')!
       const titleId = dialog.getAttribute('aria-labelledby')
       expect(titleId).toBeTruthy()
-      expect(document.getElementById(titleId!)).not.toBeNull()
+      // ShadowRoot.getElementById walks the shadow tree, not the document.
+      // The title is mounted inside the shadow root, so document.getElementById
+      // would (correctly) return null. The aria reference works because
+      // aria-labelledby resolves within the same shadow tree.
+      expect(root.getElementById(titleId!)).not.toBeNull()
       handle.destroy()
     })
   })
@@ -325,8 +413,8 @@ describe('Tack widget', () => {
       const handle = Tack.init({ projectId: 'proj_test', user: { id: 'old' } })
       handle.update({ user: { id: 'new' }, metadata: { page: '/about' } })
       handle.open()
-      document.querySelector<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
-      document.querySelector<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+      inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
+      inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
       await flush()
 
       const sentBody = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string)
@@ -351,11 +439,11 @@ describe('Tack widget', () => {
       const handle = Tack.init({ projectId: 'proj_test', onSubmit: first })
       handle.update({ onSubmit: second })
       // Same dialog, no re-mount
-      expect(document.querySelectorAll('dialog[data-tack-widget]')).toHaveLength(0)
+      expect(getAllDialogs()).toHaveLength(0)
       handle.open()
-      expect(document.querySelectorAll('dialog[data-tack-widget]')).toHaveLength(1)
-      document.querySelector<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
-      document.querySelector<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+      expect(getAllDialogs()).toHaveLength(1)
+      inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
+      inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
       await flush()
       expect(first).not.toHaveBeenCalled()
       expect(second).toHaveBeenCalledOnce()

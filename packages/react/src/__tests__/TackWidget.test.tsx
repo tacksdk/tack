@@ -7,6 +7,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render } from '@testing-library/react'
 
 import { TackWidget } from '../TackWidget'
+import { __testShadowRoots } from '@tacksdk/js'
+
+// The dialog lives inside a closed shadow root attached to a <tack-widget-host>
+// span. Pierce via the test-only WeakMap exported from @tacksdk/js. The trigger
+// button rendered by <TackWidget> stays in the React light DOM.
+function widgetShadow(): ShadowRoot | null {
+  const host = document.querySelector('tack-widget-host')
+  return host ? __testShadowRoots.get(host) ?? null : null
+}
+function getDialog(): HTMLDialogElement | null {
+  return widgetShadow()?.querySelector<HTMLDialogElement>('dialog[data-tack-widget]') ?? null
+}
+function inShadow<E extends Element = Element>(selector: string): E | null {
+  return widgetShadow()?.querySelector<E>(selector) ?? null
+}
 
 // jsdom doesn't implement HTMLDialogElement methods. Same minimal patch
 // used in @tacksdk/js's widget tests.
@@ -48,7 +63,7 @@ describe('<TackWidget>', () => {
   it('opens the vanilla dialog on trigger click', () => {
     const { getByText } = render(<TackWidget projectId="proj_t" />)
     fireEvent.click(getByText('Feedback'))
-    const dialog = document.querySelector('dialog[data-tack-widget]') as HTMLDialogElement
+    const dialog = getDialog() as HTMLDialogElement
     expect(dialog).not.toBeNull()
     expect(dialog.open).toBe(true)
   })
@@ -58,7 +73,7 @@ describe('<TackWidget>', () => {
       <TackWidget projectId="proj_t" onSubmit={() => {}} onError={() => {}} />,
     )
     fireEvent.click(getByText('Feedback'))
-    const dialogBefore = document.querySelector('dialog[data-tack-widget]')
+    const dialogBefore = getDialog()
     expect(dialogBefore).not.toBeNull()
 
     // Re-render with brand-new callback identities — exactly what happens
@@ -66,7 +81,7 @@ describe('<TackWidget>', () => {
     rerender(
       <TackWidget projectId="proj_t" onSubmit={() => {}} onError={() => {}} />,
     )
-    const dialogAfter = document.querySelector('dialog[data-tack-widget]')
+    const dialogAfter = getDialog()
     expect(dialogAfter).toBe(dialogBefore) // SAME node — no destroy + reinit
   })
 
@@ -75,10 +90,10 @@ describe('<TackWidget>', () => {
       <TackWidget projectId="proj_t" metadata={{ page: '/a' }} />,
     )
     fireEvent.click(getByText('Feedback'))
-    const dialogBefore = document.querySelector('dialog[data-tack-widget]')
+    const dialogBefore = getDialog()
 
     rerender(<TackWidget projectId="proj_t" metadata={{ page: '/b' }} />)
-    const dialogAfter = document.querySelector('dialog[data-tack-widget]')
+    const dialogAfter = getDialog()
     expect(dialogAfter).toBe(dialogBefore)
   })
 
@@ -105,9 +120,9 @@ describe('<TackWidget>', () => {
     // submit — even though no re-init happened.
     rerender(<TackWidget projectId="proj_t" onSubmit={second} />)
 
-    const textarea = document.querySelector<HTMLTextAreaElement>('[data-tack-input]')!
+    const textarea = inShadow<HTMLTextAreaElement>('[data-tack-input]')!
     fireEvent.change(textarea, { target: { value: 'hi' } })
-    const form = document.querySelector<HTMLFormElement>('dialog[data-tack-widget] form')!
+    const form = inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!
     await act(async () => {
       form.requestSubmit()
       await new Promise((r) => setTimeout(r, 0))
@@ -120,11 +135,11 @@ describe('<TackWidget>', () => {
   it('DOES re-mount when projectId changes (immutable-after-init prop)', () => {
     const { rerender, getByText } = render(<TackWidget projectId="proj_a" />)
     fireEvent.click(getByText('Feedback'))
-    const dialogBefore = document.querySelector('dialog[data-tack-widget]')
+    const dialogBefore = getDialog()
     expect(dialogBefore).not.toBeNull()
 
     rerender(<TackWidget projectId="proj_b" />)
     // Old dialog is gone (destroyed); a new one will mount on next open.
-    expect(document.querySelector('dialog[data-tack-widget]')).toBeNull()
+    expect(getDialog()).toBeNull()
   })
 })

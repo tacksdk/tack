@@ -55,3 +55,27 @@ export interface TackSubmitRequest {
   metadata?: Record<string, unknown>
   screenshot?: string
 }
+
+/**
+ * Named theme preset — a curated bundle of Layer 1 + Layer 2 design tokens.
+ *
+ * Presets are static objects exported from `tack/packages/js/src/themes/` and
+ * registered in `themes/index.ts`. Apply via `Tack.init({ preset: 'midnight' })`.
+ *
+ * - `name` — kebab-case identifier matching the registry key.
+ * - `scheme` — drives `data-tack-scheme` attribute and disables the
+ *   `prefers-color-scheme` media-query path. `'auto'` means "respect host
+ *   light/dark preference"; `'light'` or `'dark'` force the palette.
+ * - `tokens` — record of CSS custom-property values applied as inline styles
+ *   on the dialog element. Any token not provided falls through to the
+ *   defaults baked into the widget stylesheet.
+ *
+ * Adding a new preset: see `DESIGN.md` "Adding a new preset" checklist
+ * (file under `themes/`, register in `themes/index.ts`, screenshot, contrast
+ * audit, set all ~30 Layer 2 tokens).
+ */
+export interface TackThemePreset {
+  name: string
+  scheme: 'light' | 'dark' | 'auto'
+  tokens: Record<`--tack-${string}`, string>
+}

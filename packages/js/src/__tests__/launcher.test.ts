@@ -6,6 +6,34 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { TackLauncher } from '../launcher'
+import { __testShadowRoots } from '../widget'
+
+// The launcher BUTTON lives in the light DOM (it's the trigger). The DIALOG
+// it controls lives inside a closed shadow root attached to a <tack-widget-host>
+// span. Helpers below pierce the shadow root via the test affordance map.
+
+function widgetShadow(): ShadowRoot | null {
+  const host = document.querySelector('tack-widget-host')
+  return host ? __testShadowRoots.get(host) ?? null : null
+}
+
+function getDialog(): HTMLDialogElement | null {
+  return widgetShadow()?.querySelector<HTMLDialogElement>('dialog[data-tack-widget]') ?? null
+}
+
+function getAllDialogs(): HTMLDialogElement[] {
+  return Array.from(document.querySelectorAll('tack-widget-host')).flatMap((h) => {
+    const root = __testShadowRoots.get(h)
+    if (!root) return []
+    return Array.from(
+      root.querySelectorAll<HTMLDialogElement>('dialog[data-tack-widget]'),
+    )
+  })
+}
+
+function inShadow<E extends Element = Element>(selector: string): E | null {
+  return widgetShadow()?.querySelector<E>(selector) ?? null
+}
 
 // jsdom's HTMLDialogElement is a stub. Patch showModal/close, and have
 // close() dispatch a CloseEvent so the launcher's onClose hook fires.
@@ -100,9 +128,9 @@ describe('TackLauncher', () => {
   it('clicking the launcher opens the dialog and flips aria-expanded + hidden attribute', () => {
     const handle = TackLauncher.mount({ projectId: 'proj_test' })
     const button = document.querySelector<HTMLButtonElement>('button[data-tack-launcher]')!
-    expect(document.querySelector('dialog[data-tack-widget]')).toBeNull()
+    expect(getDialog()).toBeNull()
     button.click()
-    const dialog = document.querySelector<HTMLDialogElement>('dialog[data-tack-widget]')!
+    const dialog = getDialog()!
     expect(dialog.open).toBe(true)
     expect(button.getAttribute('aria-expanded')).toBe('true')
     expect(button.hasAttribute('data-tack-launcher-hidden')).toBe(true)
@@ -124,10 +152,11 @@ describe('TackLauncher', () => {
     const handle = TackLauncher.mount({ projectId: 'proj_test' })
     handle.open()
     expect(document.querySelector('button[data-tack-launcher]')).not.toBeNull()
-    expect(document.querySelector('dialog[data-tack-widget]')).not.toBeNull()
+    expect(getDialog()).not.toBeNull()
     handle.destroy()
     expect(document.querySelector('button[data-tack-launcher]')).toBeNull()
-    expect(document.querySelector('dialog[data-tack-widget]')).toBeNull()
+    expect(getDialog()).toBeNull()
+    expect(document.querySelector('tack-widget-host')).toBeNull()
     expect(() => handle.destroy()).not.toThrow()
   })
 
@@ -137,13 +166,13 @@ describe('TackLauncher', () => {
     expect(document.querySelectorAll('button[data-tack-launcher]')).toHaveLength(2)
     a.open()
     b.open()
-    expect(document.querySelectorAll('dialog[data-tack-widget]')).toHaveLength(2)
+    expect(getAllDialogs()).toHaveLength(2)
     a.destroy()
     expect(document.querySelectorAll('button[data-tack-launcher]')).toHaveLength(1)
-    expect(document.querySelectorAll('dialog[data-tack-widget]')).toHaveLength(1)
+    expect(getAllDialogs()).toHaveLength(1)
     b.destroy()
     expect(document.querySelectorAll('button[data-tack-launcher]')).toHaveLength(0)
-    expect(document.querySelectorAll('dialog[data-tack-widget]')).toHaveLength(0)
+    expect(getAllDialogs()).toHaveLength(0)
   })
 
   it('launcher styles are injected exactly once across multiple mounts', () => {
@@ -206,8 +235,8 @@ describe('TackLauncher', () => {
     const handle = TackLauncher.mount({ projectId: 'proj_test' })
     handle.update({ user: { id: 'u_42' } })
     handle.open()
-    document.querySelector<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
-    document.querySelector<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
+    inShadow<HTMLTextAreaElement>('[data-tack-input]')!.value = 'hi'
+    inShadow<HTMLFormElement>('dialog[data-tack-widget] form')!.requestSubmit()
     await new Promise((r) => setTimeout(r, 0))
     const sent = JSON.parse((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body as string)
     expect(sent.user).toEqual({ id: 'u_42' })
