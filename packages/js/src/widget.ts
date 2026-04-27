@@ -258,13 +258,16 @@ type WidgetState =
 
 const LEGAL_TRANSITIONS: Record<WidgetState, readonly WidgetState[]> = {
   idle: ['composing'],
+  // composing → capturing on Add-screenshot click; → submitting on Send.
   composing: ['capturing', 'submitting', 'idle'],
-  // capturing is a brief substate around the html-to-image snapshot. Success
-  // continues into submitting (with the screenshot attached to the request);
-  // failure flips to capture_failed, which auto-continues into submitting
-  // without the screenshot. close()/destroy() can interrupt either path.
-  capturing: ['submitting', 'capture_failed', 'idle'],
-  capture_failed: ['submitting', 'composing', 'idle'],
+  // capturing is the snapshot substate. Success returns to composing with
+  // the screenshot stashed on state; failure flips to capture_failed.
+  // submitting from capturing is gone — capture is independent of submit
+  // now, so the user clicks Send when they're ready.
+  capturing: ['composing', 'capture_failed', 'idle'],
+  // capture_failed → composing on dismiss (keystroke or new button click);
+  // → submitting if the user clicks Send anyway (capture is optional).
+  capture_failed: ['composing', 'capturing', 'submitting', 'idle'],
   submitting: ['success', 'error_retryable', 'error_docs', 'network_error', 'idle'],
   success: ['idle'],
   error_retryable: ['submitting', 'composing', 'idle'],
@@ -368,16 +371,21 @@ interface InternalState {
    * destroy().
    */
   priorBodyOverflow: string | null
-  /** Screenshot toggle checkbox (S4). Null when capture is disabled. */
-  captureToggle: HTMLInputElement | null
-  /** Screenshot thumbnail preview (S4). Hidden until capture succeeds. */
+  /**
+   * "Add screenshot" / "Remove screenshot" button (S4). Click triggers a
+   * capture; clicking again with a screenshot attached removes it. Null when
+   * captureScreenshot: false (consumer opted out — no DOM, no button).
+   */
+  captureBtn: HTMLButtonElement | null
+  /** Screenshot thumbnail preview (S4). Hidden until a capture is attached. */
   capturePreview: HTMLImageElement | null
   /**
-   * Sticky "skip capture this submit" flag set after capture_failed so a
-   * subsequent submit doesn't re-attempt the failing capture. Cleared on
-   * close() so a fresh open() starts clean.
+   * Currently attached screenshot data URL, or null. Set when capture
+   * succeeds (via the Add screenshot button); read by handleSubmit and
+   * attached to the request body. Cleared by Cancel, by Remove, and after
+   * a successful submit's auto-close.
    */
-  skipCaptureOnce: boolean
+  capturedScreenshot: string | null
 }
 
 /**
@@ -458,9 +466,9 @@ function init(config: TackWidgetConfig): TackHandle {
     destroyed: false,
     previousFocus: null,
     priorBodyOverflow: null,
-    captureToggle: null,
+    captureBtn: null,
     capturePreview: null,
-    skipCaptureOnce: false,
+    capturedScreenshot: null,
   }
 
   function ensureMounted(): HTMLDialogElement {
@@ -562,37 +570,32 @@ function init(config: TackWidgetConfig): TackHandle {
     docLink.textContent = 'Read the docs'
     docLink.hidden = true
 
-    // Screenshot toggle row (S4). Skipped entirely when captureScreenshot is
-    // explicitly false — opted out, no toggle, no preview, no DOM cost.
+    // Screenshot capture row (S4). An explicit "Add screenshot" button —
+    // clicking it captures immediately and attaches the result; clicking
+    // again removes it. This replaces the earlier checkbox-on-submit flow
+    // because the latter (a) needed two clicks to actually send a screenshot
+    // and (b) hid capture failures until submit time. Skipped entirely when
+    // captureScreenshot: false (no DOM cost).
     const captureEnabled = state.config.captureScreenshot !== false
     let captureRow: HTMLDivElement | null = null
-    let captureToggle: HTMLInputElement | null = null
+    let captureBtn: HTMLButtonElement | null = null
     let capturePreview: HTMLImageElement | null = null
     if (captureEnabled) {
       captureRow = document.createElement('div')
       captureRow.setAttribute('data-tack-capture-row', '')
 
-      const captureLabel = document.createElement('label')
-      captureLabel.setAttribute('data-tack-capture-label', '')
-      captureToggle = document.createElement('input')
-      captureToggle.type = 'checkbox'
-      // Default UNCHECKED. Privacy-by-default: a user submitting feedback
-      // shouldn't accidentally include a screenshot of whatever's on screen
-      // (which may include other users' data, billing info, etc.). The toggle
-      // is visible and one click away — users who want to include the
-      // screenshot opt in. The README documents this default.
-      captureToggle.checked = false
-      captureToggle.setAttribute('data-tack-capture-toggle', '')
-      const captureLabelText = document.createElement('span')
-      captureLabelText.textContent = 'Include screenshot'
-      captureLabel.append(captureToggle, captureLabelText)
+      captureBtn = document.createElement('button')
+      captureBtn.type = 'button'
+      captureBtn.textContent = 'Add screenshot'
+      captureBtn.setAttribute('data-tack-capture-button', '')
+      captureBtn.setAttribute('aria-pressed', 'false')
 
       capturePreview = document.createElement('img')
       capturePreview.setAttribute('data-tack-capture-preview', '')
       capturePreview.alt = 'Screenshot preview'
       capturePreview.hidden = true
 
-      captureRow.append(captureLabel, capturePreview)
+      captureRow.append(captureBtn, capturePreview)
     }
 
     const actions = document.createElement('div')
@@ -632,10 +635,28 @@ function init(config: TackWidgetConfig): TackHandle {
     state.statusEl = statusEl
     state.retryBtn = retryBtn
     state.docLink = docLink
-    state.captureToggle = captureToggle
+    state.captureBtn = captureBtn
     state.capturePreview = capturePreview
 
-    cancelBtn.addEventListener('click', () => close())
+    if (captureBtn) {
+      captureBtn.addEventListener('click', () => {
+        // Toggle behavior: with a screenshot already attached, click removes
+        // it. Otherwise capture afresh. Block while a capture is in flight.
+        if (state.fsm === 'capturing' || state.fsm === 'submitting') return
+        if (state.capturedScreenshot) {
+          clearCapturedScreenshot()
+          return
+        }
+        void runCaptureFlow()
+      })
+    }
+    cancelBtn.addEventListener('click', () => {
+      // Cancel clears all dialog state — textarea, attached screenshot, FSM —
+      // and closes. The user explicitly chose to discard; the next open()
+      // should be a clean slate, not a half-typed draft.
+      resetDialogState()
+      close()
+    })
     retryBtn.addEventListener('click', () => {
       // Retry from any error state goes straight back through submit.
       // handleSubmit reads the textarea value, which the user may have edited,
@@ -743,19 +764,15 @@ function init(config: TackWidgetConfig): TackHandle {
         break
 
       case 'capturing':
-        // Capture is brief — disable submit so the user can't double-fire
-        // while we're snapshotting. No status text; the visibility toggle
-        // and rAF makes the gap nearly invisible.
+        // Capture is brief — disable submit so the user can't fire while
+        // we're snapshotting. The Add screenshot button surface its own
+        // "Capturing…" label.
         submit.disabled = true
-        submit.textContent = 'Capturing…'
         break
 
       case 'capture_failed':
         status.hidden = false
-        status.textContent = 'Screenshot unavailable — submit anyway.'
-        // Submit stays available — auto-continue happens, but if the
-        // sequencing is interrupted (close mid-flight), the visible state
-        // matches what handleSubmit will do next.
+        status.textContent = 'Screenshot unavailable. You can still send your message.'
         submit.disabled = false
         break
 
@@ -829,32 +846,28 @@ function init(config: TackWidgetConfig): TackHandle {
   }
 
   /**
-   * Run the screenshot capture. Briefly hides the dialog (visibility, NOT
+   * Snapshot the host page. Briefly hides the dialog (visibility, NOT
    * display — preserve focus state and layout) so the snapshot doesn't
    * include the modal itself, then restores visibility before resolving.
    * Wrapped in requestAnimationFrame so the browser actually paints the
    * hidden state before the capture runs (otherwise on fast machines we'd
    * race and snapshot the dialog still painted).
    *
-   * If the consumer provided `captureScreenshot: customFn`, that runs in
-   * place of the default html-to-image path. The customFn never triggers
-   * the dynamic html-to-image import, so consumers can opt out of the lazy
-   * dep entirely.
+   * `captureScreenshot: customFn` swaps the html-to-image path for the
+   * caller's function. The customFn never triggers the dynamic html-to-image
+   * import, so consumers can opt out of the lazy dep entirely.
    */
-  async function runCapture(): Promise<string> {
+  async function snapshotHostPage(): Promise<string> {
     const customFn = state.config.captureScreenshot
     const target = document.body
     const dialog = state.dialog
     const priorVisibility = dialog?.style.visibility ?? ''
     if (dialog) dialog.style.visibility = 'hidden'
     try {
-      // Wait one paint so the visibility flip lands before the capture.
       await new Promise<void>((resolve) => {
         if (typeof requestAnimationFrame === 'function') {
           requestAnimationFrame(() => resolve())
         } else {
-          // Test envs without rAF (some jsdom configs) fall through to a
-          // microtask — close enough for a smoke test.
           setTimeout(resolve, 0)
         }
       })
@@ -868,6 +881,87 @@ function init(config: TackWidgetConfig): TackHandle {
     } finally {
       if (dialog) dialog.style.visibility = priorVisibility
     }
+  }
+
+  /**
+   * "Add screenshot" button flow. composing → capturing → composing on
+   * success (with the data URL stashed on state.capturedScreenshot and the
+   * preview img populated). On failure, transitions to capture_failed,
+   * surfaces a status message, and resets the button. Submit is not
+   * triggered — the user clicks Send when they're ready.
+   */
+  async function runCaptureFlow(): Promise<void> {
+    if (state.destroyed) return
+    if (state.fsm !== 'composing') return
+    transitionTo('capturing')
+    if (state.captureBtn) {
+      state.captureBtn.disabled = true
+      state.captureBtn.textContent = 'Capturing…'
+    }
+    try {
+      const dataUrl = await snapshotHostPage()
+      if (state.destroyed) return
+      state.capturedScreenshot = dataUrl
+      if (state.capturePreview) {
+        state.capturePreview.src = dataUrl
+        state.capturePreview.hidden = false
+      }
+      transitionTo('composing')
+      if (state.captureBtn) {
+        state.captureBtn.disabled = false
+        state.captureBtn.textContent = 'Remove screenshot'
+        state.captureBtn.setAttribute('aria-pressed', 'true')
+      }
+    } catch (err) {
+      if (state.destroyed) return
+      transitionTo('capture_failed')
+      if (state.captureBtn) {
+        state.captureBtn.disabled = false
+        state.captureBtn.textContent = 'Add screenshot'
+        state.captureBtn.setAttribute('aria-pressed', 'false')
+      }
+      // Soft error — only surface to onError when debug is on. The visible
+      // status message is the primary signal for end users.
+      if (state.config.debug) {
+        dlog('capture failed:', err)
+        state.config.onError?.(
+          new TackError(
+            {
+              type: 'internal_error',
+              message: 'screenshot_unavailable',
+              doc_url: docUrl('internal_error'),
+            },
+            null,
+          ),
+        )
+      }
+    }
+  }
+
+  /** Drop the attached screenshot + reset button + clear preview. */
+  function clearCapturedScreenshot(): void {
+    state.capturedScreenshot = null
+    if (state.capturePreview) {
+      state.capturePreview.hidden = true
+      state.capturePreview.removeAttribute('src')
+    }
+    if (state.captureBtn) {
+      state.captureBtn.textContent = 'Add screenshot'
+      state.captureBtn.setAttribute('aria-pressed', 'false')
+      state.captureBtn.disabled = false
+    }
+  }
+
+  /**
+   * Wipe everything the user might have entered or attached: textarea body,
+   * captured screenshot, capture button label, FSM. Called on Cancel so the
+   * next open() is a clean slate. NOT called on close-from-success because
+   * the success flow already auto-clears the textarea and the preview.
+   */
+  function resetDialogState(): void {
+    if (state.textarea) state.textarea.value = ''
+    clearCapturedScreenshot()
+    if (state.fsm !== 'idle') transitionTo('idle')
   }
 
   async function handleSubmit(): Promise<void> {
@@ -893,44 +987,11 @@ function init(config: TackWidgetConfig): TackHandle {
       return
     }
 
-    // Screenshot capture (S4). Runs before submit — successful capture is
-    // attached to the request body; failure transitions through
-    // capture_failed and continues to submitting without the screenshot.
-    // skipCaptureOnce prevents re-attempting a known-broken capture on retry.
-    let screenshot: string | undefined
-    const wantsCapture =
-      state.config.captureScreenshot !== false &&
-      !!state.captureToggle?.checked &&
-      !state.skipCaptureOnce
-    if (wantsCapture) {
-      transitionTo('capturing')
-      try {
-        screenshot = await runCapture()
-        if (state.destroyed) return
-        if (screenshot && state.capturePreview) {
-          state.capturePreview.src = screenshot
-          state.capturePreview.hidden = false
-        }
-      } catch (err) {
-        if (state.destroyed) return
-        state.skipCaptureOnce = true
-        transitionTo('capture_failed')
-        // Soft error — only surface when debug is on. Submit proceeds.
-        if (state.config.debug) {
-          dlog('capture failed:', err)
-          state.config.onError?.(
-            new TackError(
-              {
-                type: 'internal_error',
-                message: 'screenshot_unavailable',
-                doc_url: docUrl('internal_error'),
-              },
-              null,
-            ),
-          )
-        }
-      }
-    }
+    // Screenshot is attached out-of-band via the "Add screenshot" button —
+    // by submit time it's either already on state.capturedScreenshot or it
+    // isn't. No capture-on-submit flow; if the user wanted a screenshot they
+    // captured it explicitly, and double-click-to-send is gone.
+    const screenshot = state.capturedScreenshot ?? undefined
 
     transitionTo('submitting')
     state.abort = new AbortController()
@@ -961,6 +1022,10 @@ function init(config: TackWidgetConfig): TackHandle {
       // success UI, and firing onSubmit after destroy is surprising.
       if (state.destroyed || abortSignal.aborted) return
       state.textarea.value = ''
+      // After a successful submit the attached screenshot has served its
+      // purpose. Clearing it here means the auto-close → reopen path lands
+      // in a clean compose state, no stale preview.
+      clearCapturedScreenshot()
       // Transition to success first (shows the aria-live message + schedules
       // auto-close), THEN fire the user callback. Order matters: a slow
       // onSubmit handler shouldn't delay the visible success state.
@@ -1038,12 +1103,6 @@ function init(config: TackWidgetConfig): TackHandle {
     // Reset FSM after closing so a subsequent open() starts clean. Skip if
     // we're already idle (e.g. close() called before open() ever fired).
     if (state.fsm !== 'idle') transitionTo('idle')
-    // Fresh open() should re-attempt capture even if a prior submit failed.
-    state.skipCaptureOnce = false
-    if (state.capturePreview) {
-      state.capturePreview.hidden = true
-      state.capturePreview.removeAttribute('src')
-    }
     // Restore focus to whatever element invoked the dialog (typically the
     // host's launcher button). Skip if the element was removed from the DOM
     // since open() — focus a removed node throws on some engines.
@@ -1344,24 +1403,37 @@ const TACK_DEFAULT_CSS = `
   justify-content: flex-end;
   gap: var(--tack-space-sm);
 }
-/* Screenshot capture row (S4). Compact toggle + thumbnail preview. */
+/* Screenshot capture row (S4). "Add screenshot" / "Remove screenshot"
+   button + thumbnail preview. The button is styled like a secondary action
+   so it sits visually below the textarea but doesn't compete with Send. */
 [data-tack-widget] [data-tack-capture-row] {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: var(--tack-space-sm);
 }
-[data-tack-widget] [data-tack-capture-label] {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--tack-space-sm);
-  font-size: var(--tack-text-sm);
+[data-tack-widget] [data-tack-capture-button] {
+  background: transparent;
   color: var(--tack-fg-muted);
-  cursor: pointer;
-  user-select: none;
+  border: 1px dashed var(--tack-border-strong);
+  font-size: var(--tack-text-sm);
+  padding: 6px 12px;
+  min-height: 32px;
 }
-[data-tack-widget] [data-tack-capture-toggle] {
-  accent-color: var(--tack-accent);
-  cursor: pointer;
+[data-tack-widget] [data-tack-capture-button]:hover {
+  color: var(--tack-fg);
+  border-color: var(--tack-accent);
+  background: var(--tack-accent-soft);
+}
+[data-tack-widget] [data-tack-capture-button][aria-pressed="true"] {
+  color: var(--tack-accent-strong);
+  border-style: solid;
+  border-color: var(--tack-accent);
+  background: var(--tack-accent-soft);
+}
+[data-tack-widget] [data-tack-capture-button]:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 [data-tack-widget] [data-tack-capture-preview] {
   max-width: 100%;
