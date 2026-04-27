@@ -386,6 +386,14 @@ interface InternalState {
    * a successful submit's auto-close.
    */
   capturedScreenshot: string | null
+  /**
+   * Monotonic generation counter for in-flight captures. Each runCaptureFlow
+   * captures the current value at start; on resolve it bails if the value
+   * has changed (Cancel/ESC/backdrop closed the dialog mid-capture, or
+   * destroy ran). Without this, a capture that resolves after Cancel would
+   * re-attach a screenshot the user explicitly discarded.
+   */
+  captureGen: number
 }
 
 /**
@@ -469,6 +477,7 @@ function init(config: TackWidgetConfig): TackHandle {
     captureBtn: null,
     capturePreview: null,
     capturedScreenshot: null,
+    captureGen: 0,
   }
 
   function ensureMounted(): HTMLDialogElement {
@@ -647,16 +656,17 @@ function init(config: TackWidgetConfig): TackHandle {
           clearCapturedScreenshot()
           return
         }
+        // After a failed capture the user clicks the same button to retry.
+        // runCaptureFlow guards on `fsm === composing`; transition first so
+        // the retry isn't a silent no-op.
+        if (state.fsm === 'capture_failed') transitionTo('composing')
         void runCaptureFlow()
       })
     }
-    cancelBtn.addEventListener('click', () => {
-      // Cancel clears all dialog state — textarea, attached screenshot, FSM —
-      // and closes. The user explicitly chose to discard; the next open()
-      // should be a clean slate, not a half-typed draft.
-      resetDialogState()
-      close()
-    })
+    // Cancel just delegates to close() — the dialog 'close' event handler
+    // below clears state for ALL dismissal paths (Cancel button, ESC,
+    // backdrop click). Single-source for the discard semantics.
+    cancelBtn.addEventListener('click', () => close())
     retryBtn.addEventListener('click', () => {
       // Retry from any error state goes straight back through submit.
       // handleSubmit reads the textarea value, which the user may have edited,
@@ -676,7 +686,15 @@ function init(config: TackWidgetConfig): TackHandle {
       void handleSubmit()
     })
     dialog.addEventListener('close', () => {
-      if (!state.destroyed) state.config.onClose?.()
+      if (state.destroyed) return
+      // Clear textarea + attached screenshot + FSM on every dismissal — ESC,
+      // backdrop click, Cancel button, and programmatic close all funnel
+      // through the native 'close' event. Discard semantics are about the
+      // user's intent ("I'm done with this dialog"), not the modality. After
+      // a successful submit the state is already clear, so this is a no-op
+      // on that path.
+      resetDialogState()
+      state.config.onClose?.()
     })
     // Backdrop click closes the dialog. The native <dialog> element treats the
     // backdrop as part of itself — clicks on the backdrop fire with
@@ -893,6 +911,10 @@ function init(config: TackWidgetConfig): TackHandle {
   async function runCaptureFlow(): Promise<void> {
     if (state.destroyed) return
     if (state.fsm !== 'composing') return
+    // Claim a generation. resetDialogState (Cancel/ESC/backdrop close) bumps
+    // this; if our value drifts, the user discarded the dialog mid-capture
+    // and we must NOT re-attach the (now-stale) screenshot or touch the DOM.
+    const myGen = ++state.captureGen
     transitionTo('capturing')
     if (state.captureBtn) {
       state.captureBtn.disabled = true
@@ -900,7 +922,7 @@ function init(config: TackWidgetConfig): TackHandle {
     }
     try {
       const dataUrl = await snapshotHostPage()
-      if (state.destroyed) return
+      if (state.destroyed || myGen !== state.captureGen) return
       state.capturedScreenshot = dataUrl
       if (state.capturePreview) {
         state.capturePreview.src = dataUrl
@@ -913,7 +935,7 @@ function init(config: TackWidgetConfig): TackHandle {
         state.captureBtn.setAttribute('aria-pressed', 'true')
       }
     } catch (err) {
-      if (state.destroyed) return
+      if (state.destroyed || myGen !== state.captureGen) return
       transitionTo('capture_failed')
       if (state.captureBtn) {
         state.captureBtn.disabled = false
@@ -961,6 +983,9 @@ function init(config: TackWidgetConfig): TackHandle {
   function resetDialogState(): void {
     if (state.textarea) state.textarea.value = ''
     clearCapturedScreenshot()
+    // Bump the generation so any in-flight capture promise bails on resolve
+    // instead of re-attaching a screenshot the user just discarded.
+    state.captureGen++
     if (state.fsm !== 'idle') transitionTo('idle')
   }
 
