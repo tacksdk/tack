@@ -76,12 +76,59 @@ The `/headless` subpath does NOT include the widget — bundlers tree-shake the 
 | `fetch` | `typeof fetch` | `globalThis.fetch` | Inject a custom fetch (for proxies, tracing). |
 | `headers` | `Record<string, string>` | | Extra request headers (cannot override `X-Tack-SDK-Version`). |
 | `captureScreenshot` | `false \| ((el: Element) => Promise<string>)` | enabled | Renders an "Add screenshot" button in the dialog. Clicking captures and attaches the host page; clicking again removes it. `false` removes the button entirely; a function overrides the default html-to-image path. The capture module is lazy-loaded only on first click. |
-| `onSubmit` | `(result) => void` | | Called after a successful submit. |
+| `appVersion` | `string` | | Host app version, e.g. `"1.4.2"` or a git SHA. Sent on every submission so feedback can be bucketed by release. See [Bundler patterns](#appversion-bundler-patterns). |
+| `rating` | `false \| 'thumbs' \| 'stars' \| 'emoji'` | `false` | Rating UI variant. When set, renders a row of buttons above the textarea; sends the selected value as `rating` and auto-attaches `metadata.ratingScale` so the dashboard can label the value unambiguously (4 of 5 stars vs 4 of 4 emoji). |
+| `captureConsole` | `boolean \| CaptureConsoleConfig` | `false` | Capture host console output and ship it in `metadata.console` on submit. **Privacy footgun — read [Console capture](#console-capture-privacy) before enabling.** |
+| `onSubmit` | `(result, request) => void` | | Called after a successful submit. Receives both the server response and the full request payload (handy for firing your own analytics on rating/screenshot inclusion). |
 | `onError` | `(err: TackError) => void` | | Called on submit failure. |
 | `onOpen` | `() => void` | | Called when the dialog opens. |
 | `onClose` | `() => void` | | Called when the dialog closes. |
 
-`Tack.init()` returns a handle: `{ open, close, toggle, isOpen, destroy, update }`.
+`Tack.init()` returns a handle: `{ open, close, toggle, isOpen, destroy, update, getCapturedConsole }`.
+
+### `appVersion` bundler patterns
+
+Most apps surface their version through the bundler's environment plumbing. Pick the one that matches yours:
+
+```tsx
+// Next.js
+<TackLauncher appVersion={process.env.NEXT_PUBLIC_APP_VERSION} />
+
+// Vite
+<TackLauncher appVersion={import.meta.env.VITE_APP_VERSION} />
+
+// webpack / rollup with DefinePlugin
+declare const __APP_VERSION__: string
+<TackLauncher appVersion={__APP_VERSION__} />
+```
+
+The dashboard treats this as an opaque string. SemVer, git SHAs, datestamps — anything that uniquely identifies a release works.
+
+### Console capture (privacy)
+
+> ⚠️ **Privacy warning.** When `captureConsole` is enabled, the SDK ships your app's console output (errors, warnings, optionally info/log) to your Tack dashboard alongside the submission. This often includes user-visible PII: emails, IDs, request bodies, debug dumps. **Test in dev mode before enabling in production.**
+
+Inspect the buffer at any time:
+
+```ts
+const handle = Tack.init({ projectId: '...', captureConsole: true })
+// ... user does stuff, errors happen ...
+console.log(handle.getCapturedConsole())
+// → [{ level: 'error', ts: 1745... , msg: 'Failed to fetch /api/...' }, ...]
+```
+
+Configuration:
+
+```ts
+captureConsole: true
+// Same as: { levels: ['error', 'warn'], maxEntries: 20 }
+
+captureConsole: { levels: ['error', 'warn', 'info'], maxEntries: 50 }
+```
+
+The capture module is lazy-loaded only when `captureConsole` is set — there's no bundle cost for consumers who leave it off. Each widget instance has its own buffer (no cross-widget leakage). The serializer is hardened against circular references, errors, DOM nodes, and oversized payloads — it will never throw and break your console.
+
+If your app initializes Sentry or another error monitor AFTER the Tack widget mounts, the wrapper-identity check on uninstall preserves their patch — Tack won't restore over them.
 
 ## Errors
 

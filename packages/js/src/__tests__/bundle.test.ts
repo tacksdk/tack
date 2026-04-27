@@ -31,11 +31,13 @@ const WIDGET_FORBIDDEN = [
   'TackLauncher',
 ]
 
-// The published cap for the main bundle, excluding lazy-loaded screenshot
-// capture. Plan target is <15KB gzipped pre-S2/S4. We allow headroom so
-// slice C work doesn't trip this; tighten to the real cap once the FSM and
-// options surface land.
-const MAIN_BUNDLE_GZIP_LIMIT = 15 * 1024
+// The published cap for the main bundle. Bumped from 15 KB → 17 KB on the
+// rating + appVersion + console-capture (lazy) addition. Console-capture
+// itself is lazy-loaded (verified below) and does NOT contribute to this
+// number. The +2 KB pays for the rating UI builder, ratingOptionsFor()
+// option table, the lazy-import orchestration, and the expanded option
+// surface (TackWidgetConfig grew ~12 fields).
+const MAIN_BUNDLE_GZIP_LIMIT = 17 * 1024
 const HEADLESS_TRANSITIVE_GZIP_LIMIT = 5 * 1024
 
 function ensureBuilt() {
@@ -122,6 +124,30 @@ describe('bundle: headless tree-shake contract', () => {
       })
     })
   }
+})
+
+describe('bundle: console-capture lazy load (ESM)', () => {
+  // Console capture is lazy-loaded so consumers who don't enable
+  // `captureConsole` don't pay for the safe serializer + wrapper plumbing
+  // (~2 KB gzipped). The lazy-load contract is verified for the ESM bundle
+  // (modern toolchains pick this up via `import` resolution).
+  //
+  // CJS is intentionally NOT enforced here: tsup cannot code-split CJS
+  // dynamic imports into separate files, so the module gets inlined into
+  // index.js. Node's runtime `import()` still works lazily at the JS-engine
+  // level there, but the bytes are in the bundle either way. Modern
+  // bundlers (webpack/rollup/esbuild/vite) all consume the ESM entry, which
+  // IS code-split — see the chunk file enumerated in dist/.
+  it('index.mjs does not statically import the console-capture module', () => {
+    const file = resolve(DIST, 'index.mjs')
+    expect(existsSync(file)).toBe(true)
+    const src = readFileSync(file, 'utf8')
+    expect(src).not.toMatch(/from\s*["']\.\/console-capture["']/)
+    // The safe-serializer internals should NOT appear in the main chunk —
+    // they live in the lazy chunk only. Sentinel: the `MAX_DOM_HTML_BYTES`
+    // constant is unique to console-capture.ts.
+    expect(src).not.toContain('MAX_DOM_HTML_BYTES')
+  })
 })
 
 describe('bundle: html-to-image lazy load', () => {

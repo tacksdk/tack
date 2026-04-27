@@ -1,9 +1,11 @@
 import { useEffect, useRef } from 'react'
 import { TackLauncher as TackLauncherCore, TackError } from '@tacksdk/js'
 import type {
+  CaptureConsoleConfig,
   TackLauncherHandle,
   TackLauncherPosition,
   TackLauncherVariant,
+  TackSubmitRequest,
   TackUser,
 } from '@tacksdk/js'
 
@@ -50,8 +52,29 @@ export interface TackLauncherProps {
   /** Optional global keyboard shortcut that toggles the dialog. None by
    * default. See `TackWidgetConfig.hotkey` for syntax (e.g. `'mod+alt+f'`). */
   hotkey?: string
-  /** Called after a successful submission. */
-  onSubmit?: () => void
+  /**
+   * Host app version, e.g. "1.4.2" or a git SHA. Sent on every submission.
+   * Use bundler-injected values: `process.env.NEXT_PUBLIC_APP_VERSION`,
+   * `import.meta.env.VITE_APP_VERSION`, or a custom `__APP_VERSION__`.
+   */
+  appVersion?: string
+  /**
+   * Rating UI variant. When set, renders the control above the textarea and
+   * sends `rating` + auto-attached `metadata.ratingScale` on submission.
+   * `false` (default) hides the rating UI.
+   */
+  rating?: false | 'thumbs' | 'stars' | 'emoji'
+  /**
+   * Capture host console output. Off by default. Privacy footgun — read
+   * the README before enabling.
+   */
+  captureConsole?: boolean | CaptureConsoleConfig
+  /**
+   * Called after a successful submission. Receives the request payload sent
+   * to the API (lets you fire your own analytics on rating, screenshot,
+   * etc., without re-tracking the state).
+   */
+  onSubmit?: (request: TackSubmitRequest) => void
   /** Called on submission error. */
   onError?: (err: TackError) => void
 }
@@ -81,6 +104,9 @@ export function TackLauncher({
   user,
   metadata,
   hotkey,
+  appVersion,
+  rating,
+  captureConsole,
   onSubmit,
   onError,
 }: TackLauncherProps) {
@@ -109,9 +135,12 @@ export function TackLauncher({
       cancelLabel,
       placeholder,
       hotkey,
+      appVersion,
+      rating,
+      captureConsole,
       user: mutableRef.current.user,
       metadata: mutableRef.current.metadata,
-      onSubmit: () => mutableRef.current.onSubmit?.(),
+      onSubmit: (_result, req) => mutableRef.current.onSubmit?.(req),
       onError: (err) => mutableRef.current.onError?.(err),
     })
     handleRef.current = handle
@@ -136,6 +165,9 @@ export function TackLauncher({
     cancelLabel,
     placeholder,
     hotkey,
+    appVersion,
+    rating,
+    captureConsole,
   ])
 
   useEffect(() => {

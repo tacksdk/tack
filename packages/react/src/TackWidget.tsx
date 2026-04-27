@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { Tack, TackError } from '@tacksdk/js'
-import type { TackHandle, TackUser } from '@tacksdk/js'
+import type {
+  CaptureConsoleConfig,
+  TackHandle,
+  TackSubmitRequest,
+  TackUser,
+} from '@tacksdk/js'
 
 export interface TackWidgetProps {
   /** Public project id from the Tack dashboard ("proj_...") */
@@ -30,8 +35,32 @@ export interface TackWidgetProps {
   /** Optional global keyboard shortcut that toggles the dialog. None by
    * default. See `TackWidgetConfig.hotkey` for syntax (e.g. `'mod+alt+f'`). */
   hotkey?: string
-  /** Called after a successful submission. Latest reference is always used. */
-  onSubmit?: () => void
+  /**
+   * Host app version, e.g. "1.4.2" or a git SHA. Sent on every submission.
+   * Use bundler-injected values: Next.js `process.env.NEXT_PUBLIC_APP_VERSION`,
+   * Vite `import.meta.env.VITE_APP_VERSION`, or a custom `__APP_VERSION__`.
+   */
+  appVersion?: string
+  /**
+   * Rating UI variant. When set, renders the control above the textarea and
+   * sends `rating` + auto-attached `metadata.ratingScale` on submission.
+   *   - `false` (default) — no rating UI
+   *   - `'thumbs'` — 👍/👎 (sends ±1)
+   *   - `'stars'` — 1-5 stars (sends 1..5)
+   *   - `'emoji'` — 😞 😐 🙂 😄 (sends 1..4)
+   */
+  rating?: false | 'thumbs' | 'stars' | 'emoji'
+  /**
+   * Capture host console output. Off by default. Privacy footgun — read
+   * the README before enabling. `true` captures `error` + `warn`; pass an
+   * object for fine-grained control.
+   */
+  captureConsole?: boolean | CaptureConsoleConfig
+  /**
+   * Called after a successful submission. Receives the server response and
+   * the full request payload. Latest reference is always used.
+   */
+  onSubmit?: (request: TackSubmitRequest) => void
   /** Called on submission error. Latest reference is always used. */
   onError?: (err: TackError) => void
 }
@@ -68,6 +97,9 @@ export function TackWidget({
   metadata,
   className,
   hotkey,
+  appVersion,
+  rating,
+  captureConsole,
   onSubmit,
   onError,
 }: TackWidgetProps) {
@@ -90,9 +122,12 @@ export function TackWidget({
       cancelLabel,
       placeholder,
       hotkey,
+      appVersion,
+      rating,
+      captureConsole,
       user: mutableRef.current.user,
       metadata: mutableRef.current.metadata,
-      onSubmit: () => mutableRef.current.onSubmit?.(),
+      onSubmit: (_result, req) => mutableRef.current.onSubmit?.(req),
       onError: (err) => mutableRef.current.onError?.(err),
     })
     handleRef.current = handle
@@ -102,7 +137,7 @@ export function TackWidget({
       handleRef.current = null
       setReady(false)
     }
-  }, [projectId, endpoint, theme, injectStyles, title, submitLabel, cancelLabel, placeholder, hotkey])
+  }, [projectId, endpoint, theme, injectStyles, title, submitLabel, cancelLabel, placeholder, hotkey, appVersion, rating, captureConsole])
 
   // Patch user/metadata on the live handle when they change. Plain
   // useEffect (not useLayoutEffect) because update() only writes in-memory
@@ -143,6 +178,9 @@ export function useTack(config: Parameters<typeof Tack.init>[0]): TackHandle | n
     cancelLabel,
     placeholder,
     hotkey,
+    appVersion,
+    rating,
+    captureConsole,
     user,
     metadata,
     onSubmit,
@@ -164,9 +202,12 @@ export function useTack(config: Parameters<typeof Tack.init>[0]): TackHandle | n
       cancelLabel,
       placeholder,
       hotkey,
+      appVersion,
+      rating,
+      captureConsole,
       user: mutableRef.current.user,
       metadata: mutableRef.current.metadata,
-      onSubmit: (result) => mutableRef.current.onSubmit?.(result),
+      onSubmit: (result, req) => mutableRef.current.onSubmit?.(result, req),
       onError: (err) => mutableRef.current.onError?.(err),
     })
     handleRef.current = handle
@@ -175,7 +216,7 @@ export function useTack(config: Parameters<typeof Tack.init>[0]): TackHandle | n
       handle.destroy()
       handleRef.current = null
     }
-  }, [projectId, endpoint, theme, injectStyles, title, submitLabel, cancelLabel, placeholder, hotkey])
+  }, [projectId, endpoint, theme, injectStyles, title, submitLabel, cancelLabel, placeholder, hotkey, appVersion, rating, captureConsole])
 
   useEffect(() => {
     handleRef.current?.update({ user, metadata })
