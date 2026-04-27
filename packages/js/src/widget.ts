@@ -21,6 +21,7 @@
 // foundation of.
 
 import { TackError, docUrl } from './errors'
+import { applyFontSafety } from './font-safety'
 import { bindHotkey } from './hotkey'
 import { type BuiltinPresetName, resolvePreset } from './themes'
 import {
@@ -470,6 +471,12 @@ function init(config: TackWidgetConfig): TackHandle {
     state.host = host
 
     if (state.config.injectStyles !== false) ensureStylesInShadow(shadow)
+    // Defense against host pages whose body font is a display/script/decorative
+    // family that's unreadable as paragraph text. Sniffs + glyph-probes the
+    // host body font; if either signal trips, sets an inline font-family on
+    // the host element to a safe system stack and warns ONCE per page load.
+    // Skipped when injectStyles: false (consumer fully owns styling).
+    applyFontSafety(host, { injectStyles: state.config.injectStyles })
 
     const dialog = document.createElement('dialog')
     dialog.setAttribute('data-tack-widget', '')
