@@ -207,14 +207,20 @@ function ensureLauncherStylesInjected(): void {
 const TACK_LAUNCHER_CSS = `
 [data-tack-launcher] {
   --tack-launcher-offset: 24px;
-  /* Fall back through the widget's accent tokens so consumers who set
-     --tack-accent at :root / body level get launcher tracking for free.
-     Preset-driven launchers also receive inline overrides from mountLauncher
-     (the launcher lives outside [data-tack-widget] and can't inherit). */
+  /* Accent vars fall back through the widget's accent tokens so consumers
+     who set --tack-accent at :root / body level get launcher tracking for
+     free. --tack-launcher-fg is hardcoded (not a var() fallback) because
+     fg-on-accent is a contrast partner: its correct value depends on what
+     the launcher's RENDERED accent actually is, not what an ancestor's
+     accent happens to be. Inheriting it from page chrome (e.g. dark page
+     with light-green accent → near-black on-accent) breaks the launcher's
+     contrast. Preset-driven launchers receive inline overrides from
+     mountLauncher (the launcher lives outside [data-tack-widget] and
+     can't inherit). */
   --tack-launcher-accent: var(--tack-accent, oklch(0.62 0.19 145));
   --tack-launcher-accent-strong: var(--tack-accent-strong, oklch(0.55 0.21 145));
   --tack-launcher-accent-soft: var(--tack-accent-soft, oklch(0.62 0.19 145 / 0.35));
-  --tack-launcher-fg: var(--tack-fg-on-accent, oklch(0.99 0 0));
+  --tack-launcher-fg: oklch(0.99 0 0);
   --tack-launcher-shadow-md: 0 4px 16px oklch(0 0 0 / 0.18), 0 1px 2px oklch(0 0 0 / 0.08);
   --tack-launcher-shadow-lg: 0 12px 32px oklch(0 0 0 / 0.22), 0 4px 12px oklch(0 0 0 / 0.10);
   --tack-launcher-z: 2147483000;

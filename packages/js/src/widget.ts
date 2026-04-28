@@ -1598,8 +1598,13 @@ const TACK_DEFAULT_CSS = `
      light + lighter in dark; soft = same hue at low alpha) */
   --tack-accent-strong: color-mix(in oklch, var(--tack-accent), var(--tack-fg) 15%);
   --tack-accent-soft: color-mix(in oklch, var(--tack-accent), transparent 84%);
-  /* Semantic */
-  --tack-success: oklch(0.62 0.19 145);
+  /* Semantic — error/warning/info stay absolute (errors should always read
+     as errors regardless of brand). --tack-success cascades from accent
+     because in this widget "success" is a brand confirmation moment
+     ("Thanks for the feedback"), not a semantic warning the user needs to
+     distinguish from the accent. Override --tack-success directly to break
+     the cascade. */
+  --tack-success: var(--tack-accent);
   --tack-warning: oklch(0.75 0.16 75);
   --tack-error: oklch(0.6 0.22 25);
   --tack-info: oklch(0.65 0.13 230);
