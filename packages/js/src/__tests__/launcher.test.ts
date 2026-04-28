@@ -286,8 +286,13 @@ describe('TackLauncher', () => {
       expect(launcherStyle?.textContent ?? '').toMatch(
         /--tack-launcher-accent:\s*var\(--tack-accent,/,
       )
+      // --tack-launcher-fg is hardcoded (NOT a var() fallback) to prevent
+      // the launcher inheriting --tack-fg-on-accent from page chrome —
+      // that token's correct value depends on the launcher's RENDERED
+      // accent, not an ancestor's accent. Cross-context inheritance breaks
+      // contrast. Preset-driven launchers still get inline overrides.
       expect(launcherStyle?.textContent ?? '').toMatch(
-        /--tack-launcher-fg:\s*var\(--tack-fg-on-accent,/,
+        /--tack-launcher-fg:\s*oklch\(0\.99 0 0\)\s*;/,
       )
       handle.destroy()
       document.body.style.removeProperty('--tack-accent')
