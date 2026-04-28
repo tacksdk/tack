@@ -1566,24 +1566,38 @@ const TACK_DEFAULT_CSS = `
  * fallbacks here so consumers who only set a subset still render correctly.
  */
 [data-tack-widget] {
-  /* Surfaces (light) */
+  /*
+   * Tier 1 base + Tier 2 derivations (DESIGN.md "Token Layers"). The five
+   * Tier 1 tokens — --tack-bg, --tack-fg, --tack-accent, --tack-radius,
+   * --tack-font — actually skin the widget because Tier 2 defaults derive
+   * from them via color-mix() / oklch(from ...) / calc(). Override any
+   * Tier 2 token directly to break the cascade for that step (presets do
+   * this for hand-tuned values that don't fit the formula).
+   *
+   * Dark mode redefines ONLY Tier 1 + the few tokens that genuinely flip
+   * direction (fg-on-accent, shadows). Everything else cascades.
+   */
+  /* Tier 1 — surfaces / text / accent (light defaults) */
   --tack-bg: oklch(0.98 0.005 100);
-  --tack-surface: oklch(1 0 0);
-  --tack-surface-elevated: oklch(1 0 0);
-  --tack-surface-overlay: oklch(0 0 0 / 0.4);
-  /* Text (light) */
   --tack-fg: oklch(0.22 0.01 100);
-  --tack-fg-muted: oklch(0.5 0.01 100);
-  --tack-fg-subtle: oklch(0.65 0.01 100);
-  --tack-fg-on-accent: oklch(0.99 0 0);
-  /* Borders */
-  --tack-border: oklch(0.9 0.005 100);
-  --tack-border-strong: oklch(0.82 0.005 100);
-  --tack-border-focus: oklch(0.62 0.19 145);
-  /* Accent */
   --tack-accent: oklch(0.62 0.19 145);
-  --tack-accent-strong: oklch(0.55 0.20 145);
-  --tack-accent-soft: oklch(0.62 0.19 145 / 0.16);
+  /* Tier 2 — surfaces (lift bg toward white; uniform formula across schemes) */
+  --tack-surface: color-mix(in oklch, var(--tack-bg), white 6%);
+  --tack-surface-elevated: color-mix(in oklch, var(--tack-bg), white 12%);
+  --tack-surface-overlay: oklch(0 0 0 / 0.4);
+  /* Tier 2 — text (mix fg toward bg for muted/subtle; on-accent stays
+     scheme-aware via the dark-mode override below) */
+  --tack-fg-muted: color-mix(in oklch, var(--tack-fg), var(--tack-bg) 35%);
+  --tack-fg-subtle: color-mix(in oklch, var(--tack-fg), var(--tack-bg) 55%);
+  --tack-fg-on-accent: oklch(0.99 0 0);
+  /* Tier 2 — borders (faint hint of fg over bg; focus tracks accent) */
+  --tack-border: color-mix(in oklch, var(--tack-fg), var(--tack-bg) 85%);
+  --tack-border-strong: color-mix(in oklch, var(--tack-fg), var(--tack-bg) 70%);
+  --tack-border-focus: var(--tack-accent);
+  /* Tier 2 — accent variants (strong = mix toward fg, naturally darker in
+     light + lighter in dark; soft = same hue at low alpha) */
+  --tack-accent-strong: color-mix(in oklch, var(--tack-accent), var(--tack-fg) 15%);
+  --tack-accent-soft: color-mix(in oklch, var(--tack-accent), transparent 84%);
   /* Semantic */
   --tack-success: oklch(0.62 0.19 145);
   --tack-warning: oklch(0.75 0.16 75);
@@ -1890,22 +1904,20 @@ const TACK_DEFAULT_CSS = `
   border-color: transparent;
 }
 
-/* Forced dark — preset.scheme === 'dark' OR legacy theme="dark" prop. */
+/* Forced dark — preset.scheme === 'dark' OR legacy theme="dark" prop.
+ * Only redefine Tier 1 + tokens that genuinely flip direction in dark
+ * (fg-on-accent reads dark text on the now-lighter accent; shadows have
+ * absolute alpha values that read differently against a dark surface).
+ * --tack-surface*, --tack-fg-muted/subtle, --tack-border*, --tack-accent-*
+ * cascade automatically from the new Tier 1 base.
+ */
 [data-tack-widget][data-tack-scheme="dark"],
 [data-tack-widget][data-tack-theme="dark"] {
   --tack-bg: oklch(0.16 0.005 100);
-  --tack-surface: oklch(0.2 0.005 100);
-  --tack-surface-elevated: oklch(0.24 0.005 100);
-  --tack-surface-overlay: oklch(0 0 0 / 0.5);
   --tack-fg: oklch(0.96 0.005 100);
-  --tack-fg-muted: oklch(0.7 0.005 100);
-  --tack-fg-subtle: oklch(0.5 0.005 100);
-  --tack-border: oklch(0.28 0.005 100);
-  --tack-border-strong: oklch(0.38 0.005 100);
   --tack-accent: oklch(0.7 0.18 145);
-  --tack-accent-strong: oklch(0.78 0.18 145);
-  --tack-accent-soft: oklch(0.7 0.18 145 / 0.18);
   --tack-fg-on-accent: oklch(0.16 0.005 100);
+  --tack-surface-overlay: oklch(0 0 0 / 0.5);
   --tack-shadow-sm: 0 1px 2px oklch(0 0 0 / 0.3);
   --tack-shadow-md: 0 4px 12px oklch(0 0 0 / 0.4), 0 1px 3px oklch(0 0 0 / 0.3);
   --tack-shadow-lg: 0 24px 64px oklch(0 0 0 / 0.4), 0 4px 12px oklch(0 0 0 / 0.18);
@@ -1915,18 +1927,10 @@ const TACK_DEFAULT_CSS = `
 @media (prefers-color-scheme: dark) {
   [data-tack-widget]:not([data-tack-scheme]):not([data-tack-theme="light"]):not([data-tack-theme="dark"]) {
     --tack-bg: oklch(0.16 0.005 100);
-    --tack-surface: oklch(0.2 0.005 100);
-    --tack-surface-elevated: oklch(0.24 0.005 100);
-    --tack-surface-overlay: oklch(0 0 0 / 0.5);
     --tack-fg: oklch(0.96 0.005 100);
-    --tack-fg-muted: oklch(0.7 0.005 100);
-    --tack-fg-subtle: oklch(0.5 0.005 100);
-    --tack-border: oklch(0.28 0.005 100);
-    --tack-border-strong: oklch(0.38 0.005 100);
     --tack-accent: oklch(0.7 0.18 145);
-    --tack-accent-strong: oklch(0.78 0.18 145);
-    --tack-accent-soft: oklch(0.7 0.18 145 / 0.18);
     --tack-fg-on-accent: oklch(0.16 0.005 100);
+    --tack-surface-overlay: oklch(0 0 0 / 0.5);
     --tack-shadow-sm: 0 1px 2px oklch(0 0 0 / 0.3);
     --tack-shadow-md: 0 4px 12px oklch(0 0 0 / 0.4), 0 1px 3px oklch(0 0 0 / 0.3);
     --tack-shadow-lg: 0 24px 64px oklch(0 0 0 / 0.4), 0 4px 12px oklch(0 0 0 / 0.18);

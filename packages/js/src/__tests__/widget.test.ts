@@ -1756,6 +1756,91 @@ describe('Tack widget', () => {
     })
   })
 
+  describe('Tier 1 color cascade (DESIGN.md "Token Layers")', () => {
+    function widgetCss(shadow: ShadowRoot): string {
+      const adopted = (shadow as unknown as { adoptedStyleSheets?: CSSStyleSheet[] })
+        .adoptedStyleSheets
+      if (adopted && adopted.length > 0) {
+        for (const sheet of adopted) {
+          try {
+            const text = Array.from(sheet.cssRules).map((r) => r.cssText).join('\n')
+            if (text.includes('--tack-accent')) return text
+          } catch {
+            // fall through
+          }
+        }
+      }
+      return shadow.querySelector('style[data-tack-styles]')?.textContent ?? ''
+    }
+
+    it('Tier 2 surface tokens derive from --tack-bg via color-mix()', () => {
+      Tack.init({ projectId: 'proj_test' }).open()
+      const css = widgetCss(widgetShadow()!)
+      expect(css).toMatch(/--tack-surface:\s*color-mix\(\s*in\s*oklch\s*,\s*var\(--tack-bg\)/)
+      expect(css).toMatch(/--tack-surface-elevated:\s*color-mix\(\s*in\s*oklch\s*,\s*var\(--tack-bg\)/)
+      // Overlay stays absolute (backdrop scrim is scheme-independent).
+      expect(css).toMatch(/--tack-surface-overlay:\s*oklch\(0\s*0\s*0\s*\/\s*0\.4\)/)
+    })
+
+    it('Tier 2 text tokens derive from --tack-fg / --tack-bg via color-mix()', () => {
+      Tack.init({ projectId: 'proj_test' }).open()
+      const css = widgetCss(widgetShadow()!)
+      expect(css).toMatch(/--tack-fg-muted:\s*color-mix\(\s*in\s*oklch\s*,\s*var\(--tack-fg\)\s*,\s*var\(--tack-bg\)\s*35%\)/)
+      expect(css).toMatch(/--tack-fg-subtle:\s*color-mix\(\s*in\s*oklch\s*,\s*var\(--tack-fg\)\s*,\s*var\(--tack-bg\)\s*55%\)/)
+    })
+
+    it('Tier 2 border tokens derive from fg/bg; focus tracks accent', () => {
+      Tack.init({ projectId: 'proj_test' }).open()
+      const css = widgetCss(widgetShadow()!)
+      expect(css).toMatch(/--tack-border:\s*color-mix\(\s*in\s*oklch\s*,\s*var\(--tack-fg\)\s*,\s*var\(--tack-bg\)\s*85%\)/)
+      expect(css).toMatch(/--tack-border-strong:\s*color-mix\(\s*in\s*oklch\s*,\s*var\(--tack-fg\)\s*,\s*var\(--tack-bg\)\s*70%\)/)
+      expect(css).toMatch(/--tack-border-focus:\s*var\(--tack-accent\)/)
+    })
+
+    it('Tier 2 accent variants derive from --tack-accent', () => {
+      Tack.init({ projectId: 'proj_test' }).open()
+      const css = widgetCss(widgetShadow()!)
+      // Strong mixes toward fg → naturally darker in light, lighter in dark.
+      expect(css).toMatch(/--tack-accent-strong:\s*color-mix\(\s*in\s*oklch\s*,\s*var\(--tack-accent\)\s*,\s*var\(--tack-fg\)\s*15%\)/)
+      // Soft is accent at low alpha (16% mix with transparent → 16% accent).
+      expect(css).toMatch(/--tack-accent-soft:\s*color-mix\(\s*in\s*oklch\s*,\s*var\(--tack-accent\)\s*,\s*transparent\s*84%\)/)
+    })
+
+    it('dark-scheme block redefines only Tier 1 + flip-direction tokens', () => {
+      Tack.init({ projectId: 'proj_test' }).open()
+      const css = widgetCss(widgetShadow()!)
+      // Find the forced-dark rule body.
+      const darkMatch = css.match(/\[data-tack-widget\]\[data-tack-scheme="dark"\][^{]*\{([^}]*)\}/)
+      expect(darkMatch).not.toBeNull()
+      const darkBody = darkMatch?.[1] ?? ''
+      // These three must appear (Tier 1 base differs in dark).
+      expect(darkBody).toMatch(/--tack-bg:/)
+      expect(darkBody).toMatch(/--tack-fg:/)
+      expect(darkBody).toMatch(/--tack-accent:/)
+      // fg-on-accent flips direction (white-on-green in light → dark-on-light-green in dark).
+      expect(darkBody).toMatch(/--tack-fg-on-accent:/)
+      // These should NOT appear — they cascade from Tier 1.
+      expect(darkBody).not.toMatch(/--tack-fg-muted:/)
+      expect(darkBody).not.toMatch(/--tack-fg-subtle:/)
+      expect(darkBody).not.toMatch(/--tack-border:/)
+      expect(darkBody).not.toMatch(/--tack-border-strong:/)
+      expect(darkBody).not.toMatch(/--tack-surface:/)
+      expect(darkBody).not.toMatch(/--tack-surface-elevated:/)
+      expect(darkBody).not.toMatch(/--tack-accent-strong:/)
+      expect(darkBody).not.toMatch(/--tack-accent-soft:/)
+    })
+
+    it('individual Tier 2 color overrides on the dialog beat the cascade', () => {
+      const handle = Tack.init({ projectId: 'proj_test' })
+      handle.open()
+      const dialog = getDialog()!
+      dialog.style.setProperty('--tack-accent', 'red')
+      dialog.style.setProperty('--tack-accent-strong', 'blue')
+      // The override-to-break-cascade contract: explicit tier-2 wins.
+      expect(dialog.style.getPropertyValue('--tack-accent-strong')).toBe('blue')
+    })
+  })
+
   it('SSR (no window) returns a no-op handle without throwing', () => {
     const realWindow = globalThis.window
     const realDocument = globalThis.document
