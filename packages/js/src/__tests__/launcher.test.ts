@@ -266,34 +266,28 @@ describe('TackLauncher', () => {
       handle.destroy()
     })
 
-    it('CSS fallback: --tack-accent on an ancestor flows to launcher when no preset', () => {
-      // The CSS-only path: launcher rule reads var(--tack-accent, default).
-      // A consumer who sets --tack-accent at :root / body level should see
-      // the launcher pick it up via the inheritance chain, even without
-      // passing a preset. Regression test for the var() fallback being
-      // accidentally removed from the launcher CSS.
+    it('themeable: --tack-accent at :root flows to launcher; fg auto-contrasts', () => {
+      // The launcher is themeable via --tack-accent inheritance, BUT its fg
+      // auto-contrasts based on the accent's lightness, so an unexpected
+      // ancestor accent (e.g. page chrome's lighter dark-mode green) doesn't
+      // produce poor contrast — the fg flips to dark text automatically.
       document.body.style.setProperty('--tack-accent', 'oklch(0.5 0.3 30)')
       const handle = TackLauncher.mount({ projectId: 'proj_test' })
       const button = document.querySelector<HTMLButtonElement>('[data-tack-launcher]')!
       // No inline override (default preset has empty tokens).
       expect(button.style.getPropertyValue('--tack-launcher-accent')).toBe('')
-      // The launcher CSS rule itself must declare the var() fallback. We
-      // assert on the stylesheet text rather than getComputedStyle because
-      // jsdom does not always cascade CSS variables across the launcher's
-      // global <style> tag back to the body element. This catches the
-      // regression target: someone deletes the var() fallback.
+      // The CSS contract: accent inherits via var(), fg derives via OKLCH
+      // lightness clamp, accent-strong mixes toward fg (auto-flips direction).
       const launcherStyle = document.head.querySelector('style[data-tack-launcher-styles]')
-      expect(launcherStyle?.textContent ?? '').toMatch(
-        /--tack-launcher-accent:\s*var\(--tack-accent,/,
-      )
-      // --tack-launcher-fg is hardcoded (NOT a var() fallback) to prevent
-      // the launcher inheriting --tack-fg-on-accent from page chrome —
-      // that token's correct value depends on the launcher's RENDERED
-      // accent, not an ancestor's accent. Cross-context inheritance breaks
-      // contrast. Preset-driven launchers still get inline overrides.
-      expect(launcherStyle?.textContent ?? '').toMatch(
-        /--tack-launcher-fg:\s*oklch\(0\.99 0 0\)\s*;/,
-      )
+      const css = launcherStyle?.textContent ?? ''
+      expect(css).toMatch(/--tack-launcher-accent:\s*var\(--tack-accent,\s*oklch\(0\.62 0\.19 145\)\)/)
+      // OKLCH-derived auto-contrasting fg: clamp(0.16, ..., 0.99) snaps to extremes.
+      expect(css).toMatch(/--tack-launcher-fg:\s*oklch\(\s*from\s+var\(--tack-launcher-accent\)\s+clamp\(0\.16,\s*calc\(\(0\.65\s*-\s*l\)\s*\*\s*1e9\),\s*0\.99\)/)
+      // Accent-strong mixes toward the (auto-contrasting) fg: hover direction
+      // automatically flips for light vs dark accents.
+      expect(css).toMatch(/--tack-launcher-accent-strong:\s*color-mix\(in\s+oklch,\s*var\(--tack-launcher-accent\),\s*var\(--tack-launcher-fg\)\s+15%\)/)
+      // Accent-soft is just accent at low alpha.
+      expect(css).toMatch(/--tack-launcher-accent-soft:\s*color-mix\(in\s+oklch,\s*var\(--tack-launcher-accent\),\s*transparent\s+65%\)/)
       handle.destroy()
       document.body.style.removeProperty('--tack-accent')
     })
