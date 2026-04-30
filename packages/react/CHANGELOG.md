@@ -1,5 +1,65 @@
 # @tacksdk/react
 
+## 0.3.0
+
+### Minor Changes
+
+- [#27](https://github.com/tacksdk/tack/pull/27) [`d8263e7`](https://github.com/tacksdk/tack/commit/d8263e7f94ed7894a1d5bc0433683350e7199e1f) Thanks [@lucascaro](https://github.com/lucascaro)! - feat(sdk): rating UI + appVersion + lazy console capture
+
+  Three new submission dimensions, all opt-in:
+
+  **`appVersion`.** Host apps can tag every submission with their release version
+  (`v1.4.2`, a git SHA, anything). Closes the half-shipped gap where the API
+  field existed but the widget couldn't populate it.
+
+  **`rating`.** Optional rating UI variant — `'thumbs'` (👍/👎, ±1), `'stars'`
+  (1-5), or `'emoji'` (😞 😐 🙂 😄, 1-4). Renders above the textarea when set;
+  sends `rating` + auto-attaches `metadata.ratingScale` so the dashboard can
+  disambiguate (4 of 5 stars vs 4 of 4 emoji). Defaults to `false` — no UI,
+  no behavior change for existing consumers.
+
+  **`captureConsole` (lazy).** Patches host console at widget mount, buffers
+  last N entries (default 20 of `error` + `warn`), ships in `metadata.console`
+  on submit. Per-widget buffer (no cross-widget leakage). Wrapper-identity
+  check on uninstall preserves late-initializing observability tools (Sentry,
+  Datadog) — won't restore over their patches. Safe serializer handles
+  cycles, errors, DOM nodes, depth limits, size caps; will never throw and
+  break the host page. Inspect via `handle.getCapturedConsole()` before
+  shipping in production. Lazy-loaded module — zero bundle cost when off.
+
+  **`onSubmit(result, request)`.** Callback now receives both the server
+  response and the full request payload so consumers can fire their own
+  analytics on submission contents. Backwards compatible — existing
+  `(result) => void` callers still work.
+
+  **Bundle:** main bundle cap raised from 15 KB → 17 KB to accommodate the
+  rating UI + lazy-load orchestration. Console-capture itself is in a
+  separate chunk and contributes 0 bytes when unused.
+
+  **Types:** `CaptureConsoleConfig` and `ConsoleEntry` are now exported.
+
+- [#23](https://github.com/tacksdk/tack/pull/23) [`21dacb7`](https://github.com/tacksdk/tack/commit/21dacb7bdb7309e566c815f6bdd8f7bb0ba27e9a) Thanks [@lucascaro](https://github.com/lucascaro)! - feat(sdk): slice C — options surface, screenshot capture, font safety + S8 cleanup
+
+  **Breaking (pre-1.0).** The legacy module-level `init`, `submit`, `reset`, `getConfig` exports from `@tacksdk/js` and `@tacksdk/react` are removed. Migrate:
+
+  - Widget callers: `Tack.init({ projectId })` (already the documented surface)
+  - Headless callers: `import { submit } from '@tacksdk/js/headless'` and pass `{ projectId, body }` per call
+
+  The removal eliminates module-level state that broke multi-instance use and leaked across tests.
+
+  **New `Tack.init` options.** `placement`, `trigger`, `zIndex`, `modal`, `scrollLock`, `debug`, `fetch`, `headers`, `captureScreenshot`. See package READMEs.
+
+  **Screenshot capture.** Lazy-loaded via `html-to-image`; ships behind a checkbox in the dialog. `captureScreenshot: false` disables; `captureScreenshot: customFn` overrides. The lazy import keeps the main bundle under the existing 15 KB gzip cap.
+
+  **Font safety.** Widget host now detects unsafe host body fonts (display, script, all-caps) or missing-glyph fonts and falls back to a system stack with a one-shot `console.warn`. Skipped when `injectStyles: false`.
+
+  **OKLCH fallback.** Defends Safari 15.4-16.3 + older Chrome/Firefox via `@supports not (color: oklch(0 0 0))` block. No effect on modern browsers.
+
+### Patch Changes
+
+- Updated dependencies [[`d8263e7`](https://github.com/tacksdk/tack/commit/d8263e7f94ed7894a1d5bc0433683350e7199e1f), [`21dacb7`](https://github.com/tacksdk/tack/commit/21dacb7bdb7309e566c815f6bdd8f7bb0ba27e9a)]:
+  - @tacksdk/js@0.3.0
+
 ## 0.2.0
 
 ### Minor Changes
