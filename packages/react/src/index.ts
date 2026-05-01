@@ -13,9 +13,11 @@ export { TackLauncher } from './TackLauncher'
 export type { TackLauncherProps } from './TackLauncher'
 export { TackError } from '@tacksdk/js'
 export type {
+  BuiltinPresetName,
   TackHandle,
   TackLauncherPosition,
   TackLauncherVariant,
+  TackThemePreset,
   TackUser,
   TackSubmitRequest,
   TackFeedbackCreated,

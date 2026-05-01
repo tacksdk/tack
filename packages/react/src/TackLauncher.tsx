@@ -1,11 +1,13 @@
 import { useEffect, useRef } from 'react'
 import { TackLauncher as TackLauncherCore, TackError } from '@tacksdk/js'
 import type {
+  BuiltinPresetName,
   CaptureConsoleConfig,
   TackLauncherHandle,
   TackLauncherPosition,
   TackLauncherVariant,
   TackSubmitRequest,
+  TackThemePreset,
   TackUser,
 } from '@tacksdk/js'
 
@@ -35,6 +37,16 @@ export interface TackLauncherProps {
   inline?: boolean
   /** Color scheme. "auto" follows prefers-color-scheme. */
   theme?: 'auto' | 'light' | 'dark'
+  /**
+   * Theme preset. Built-in: 'default' | 'midnight' | 'paper'. Or pass a
+   * custom `TackThemePreset` object. Resolved by the vanilla core.
+   *
+   * Note: like `theme`, changing this re-mounts the launcher. If you pass a
+   * `TackThemePreset` *object*, hoist it to a module-level constant or
+   * `useMemo` it — inline `preset={{ ... }}` will re-mount on every parent
+   * render. String preset names are referentially stable and safe to inline.
+   */
+  preset?: BuiltinPresetName | TackThemePreset
   /** Skip injecting the SDK's default stylesheet — host owns the look. */
   injectStyles?: boolean
   /** Dialog title */
@@ -96,6 +108,7 @@ export function TackLauncher({
   className,
   inline,
   theme,
+  preset,
   injectStyles,
   title,
   submitLabel,
@@ -129,6 +142,7 @@ export function TackLauncher({
       launcherContainer: inline && inlineHostRef.current ? inlineHostRef.current : undefined,
       launcherClassName: className,
       theme,
+      preset,
       injectStyles,
       title,
       submitLabel,
@@ -159,6 +173,7 @@ export function TackLauncher({
     className,
     inline,
     theme,
+    preset,
     injectStyles,
     title,
     submitLabel,

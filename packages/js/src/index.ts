@@ -17,6 +17,7 @@ export type {
   CaptureConsoleConfig,
   ConsoleEntry,
 } from './widget'
+export type { BuiltinPresetName } from './themes'
 // Test-only affordance for cross-package tests (e.g. @tacksdk/react). Closed
 // shadow roots cannot be reached via host.shadowRoot, so this WeakMap is the
 // test-only path back in. The double underscore signals "not public API" the
