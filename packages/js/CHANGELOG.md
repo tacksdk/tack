@@ -1,5 +1,21 @@
 # @tacksdk/js
 
+## 0.3.2
+
+### Patch Changes
+
+- [#35](https://github.com/tacksdk/tack/pull/35) [`55fa1b0`](https://github.com/tacksdk/tack/commit/55fa1b0eb2ccdddd3d79178658a2e59cc2ff9763) Thanks [@lucascaro](https://github.com/lucascaro)! - Fix CORS preflight failure for cross-origin callers.
+
+  The SDK now appends `?projectId=<id>` to the feedback request URL. The server's
+  CORS preflight (OPTIONS) reads the project ID from the query string to look up
+  the per-project `originAllowlist` — preflights have no body to read. Without
+  this, every cross-origin call was blocked by the browser even when the origin
+  was correctly allowlisted, because the preflight returned a 204 with no
+  `Access-Control-Allow-Origin` header.
+
+  Same-origin callers were not affected (browsers skip preflight for same-origin
+  requests).
+
 ## 0.3.1
 
 ### Patch Changes
