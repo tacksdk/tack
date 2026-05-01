@@ -1,5 +1,37 @@
 # @tacksdk/react
 
+## 0.4.0
+
+### Minor Changes
+
+- [#38](https://github.com/tacksdk/tack/pull/38) [`7698bbd`](https://github.com/tacksdk/tack/commit/7698bbd8b7991b0a4808603d655c997b5cb408e0) Thanks [@lucascaro](https://github.com/lucascaro)! - Pass `preset` through `@tacksdk/react` wrappers.
+
+  The vanilla SDK has accepted a `preset` option (built-in `'default' | 'midnight' | 'paper'` or a custom `TackThemePreset` object) since 0.3.0, but the React wrappers never forwarded it. React consumers had to drop down to the vanilla SDK to opt into themes.
+
+  `<TackWidget>`, `useTack`, and `<TackLauncher>` now accept a `preset` prop:
+
+  ```tsx
+  <TackWidget projectId="proj_..." preset="midnight" />
+  <TackLauncher projectId="proj_..." preset="midnight" />
+  ```
+
+  Custom preset objects work too:
+
+  ```tsx
+  const PRESET = { name: 'brand', scheme: 'light', tokens: { '--tack-accent': 'oklch(...)' } }
+  // hoist or useMemo — inline objects re-mount the widget each render
+  <TackWidget projectId="proj_..." preset={PRESET} />
+  ```
+
+  `BuiltinPresetName` and `TackThemePreset` are now re-exported from `@tacksdk/react` for typed preset references.
+
+  Like `theme`, changing `preset` re-mounts the widget. JSDoc on the prop documents the inline-object footgun.
+
+### Patch Changes
+
+- Updated dependencies [[`7698bbd`](https://github.com/tacksdk/tack/commit/7698bbd8b7991b0a4808603d655c997b5cb408e0)]:
+  - @tacksdk/js@0.4.0
+
 ## 0.3.2
 
 ### Patch Changes
