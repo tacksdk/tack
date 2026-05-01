@@ -261,7 +261,7 @@ describe('Tack widget', () => {
 
       expect(fetchMock).toHaveBeenCalledOnce()
       const call = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
-      expect(call[0]).toMatch(/\/api\/v1\/feedback$/)
+      expect(call[0]).toMatch(/\/api\/v1\/feedback\?projectId=proj_test$/)
       expect(call[1].headers).toMatchObject({
         'X-Tack-SDK-Version': expect.any(String),
         'Idempotency-Key': expect.any(String),
