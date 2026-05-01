@@ -94,9 +94,10 @@ export interface TackLauncherProps {
    */
   placement?: TackWidgetConfig['placement']
   /**
-   * Forwarded to the underlying widget. Defaults to `'auto'`. Setting this
-   * to `'none'` suppresses the widget's own trigger button — useful when
-   * the launcher should be the only entry point.
+   * Forwarded to the underlying widget. Currently dormant in the vanilla
+   * core (see `TackWidgetConfig.trigger` — `'auto'` is reserved for the
+   * future auto-mount path; `'none'` is today's effective default). The
+   * launcher's own button is the trigger regardless of this value.
    */
   trigger?: 'auto' | 'none'
   /** CSS z-index applied to the dialog host. Default: SDK-managed. */

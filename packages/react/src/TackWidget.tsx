@@ -84,10 +84,12 @@ export interface TackWidgetProps {
    */
   placement?: TackWidgetConfig['placement']
   /**
-   * `'auto'` (default) renders the SDK's built-in trigger button.
-   * `'none'` means the host provides its own trigger (call `handle.open()`).
-   * In `<TackWidget>` the React wrapper always renders its own button on top
-   * of whatever the core does, so this is mostly useful via `useTack`.
+   * Reserves the future auto-mount slot. Default in vanilla is `'none'`;
+   * `'auto'` is wired through but currently a no-op at `Tack.init` (see
+   * `TackWidgetConfig.trigger` JSDoc — auto-mount lands later). The React
+   * wrapper renders its own trigger button independently, so this prop
+   * has no observable effect on `<TackWidget>` today and is here purely for
+   * forward-compat. `useTack` users can ignore it.
    */
   trigger?: 'auto' | 'none'
   /** CSS z-index applied to the dialog host. Default: SDK-managed. */

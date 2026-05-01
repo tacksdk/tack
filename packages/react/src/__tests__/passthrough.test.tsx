@@ -33,6 +33,11 @@ function patchDialog() {
     show: () => void
     close: () => void
   }
+  // showModal/show are guarded against re-patching to avoid composing wrappers
+  // if a sibling test file installed an earlier version. close() is always
+  // (re)installed unconditionally so the 'close' event dispatch this file
+  // depends on can't be silently shadowed by another file's patch under a
+  // shared-jsdom vitest config.
   if (!('showModal' in proto) || (proto.showModal as { _patched?: boolean })?._patched !== true) {
     const showModal = function (this: HTMLDialogElement) {
       this.setAttribute('open', '')
@@ -41,14 +46,14 @@ function patchDialog() {
     ;(showModal as unknown as { _patched: boolean })._patched = true
     proto.showModal = showModal
     proto.show = showModal
-    proto.close = function (this: HTMLDialogElement) {
-      this.removeAttribute('open')
-      Object.defineProperty(this, 'open', { configurable: true, value: false, writable: true })
-      // Real <dialog> fires a 'close' event on close(); jsdom doesn't, but the
-      // widget's onClose hook listens on it. Dispatch synchronously so tests
-      // see the wrapper-side ref pattern fire.
-      this.dispatchEvent(new Event('close'))
-    }
+  }
+  proto.close = function (this: HTMLDialogElement) {
+    this.removeAttribute('open')
+    Object.defineProperty(this, 'open', { configurable: true, value: false, writable: true })
+    // Real <dialog> fires a 'close' event on close(); jsdom doesn't, but the
+    // widget's onClose hook listens on it. Dispatch synchronously so tests
+    // see the wrapper-side ref pattern fire.
+    this.dispatchEvent(new Event('close'))
   }
 }
 
@@ -151,14 +156,15 @@ describe('<TackWidget> field passthrough', () => {
     expect(headers['X-Trace-Id']).toBe('abc123')
   })
 
-  it('trigger="none" — useTack does not render any built-in trigger button', () => {
+  it('trigger — accepted by useTack without throwing (dormant in core)', () => {
+    // Vanilla `trigger` is currently a no-op at Tack.init (see widget.ts
+    // JSDoc on TackWidgetConfig.trigger). Smoke test only — same shape as
+    // the placement passthrough above.
     function Host() {
       useTack({ projectId: 'proj_t', trigger: 'none' })
       return null
     }
-    render(<Host />)
-    // useTack renders nothing; no built-in trigger should be in the DOM either.
-    expect(document.querySelector('[data-tack-trigger]')).toBeNull()
+    expect(() => render(<Host />)).not.toThrow()
   })
 
   it('onOpen / onClose — invoked, and latest identity is used (ref pattern)', () => {
