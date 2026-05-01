@@ -1,5 +1,24 @@
 # @tacksdk/react
 
+## 0.5.0
+
+### Minor Changes
+
+- [#40](https://github.com/tacksdk/tack/pull/40) [`8fe8110`](https://github.com/tacksdk/tack/commit/8fe8110ff335dd10b9fb1ca75a701123668a53c2) Thanks [@lucascaro](https://github.com/lucascaro)! - `<TackWidget>`, `useTack`, and `<TackLauncher>` now forward every vanilla
+  `TackWidgetConfig` / `TackLauncherConfig` field that previously had no React
+  prop equivalent: `container`, `onOpen`, `onClose` (widget + hook only — the
+  launcher reserves them for `aria-expanded` wiring), `placement`, `trigger`,
+  `zIndex`, `modal`, `scrollLock`, `debug`, `fetch`, `headers`,
+  `captureScreenshot`. `useTack` is now typed against `TackWidgetConfig`
+  directly so its parameter type matches its runtime behavior. A type-level
+  coverage assertion in the React test suite fails CI when a future vanilla
+  config field is added without surfacing it through the React layer.
+
+### Patch Changes
+
+- Updated dependencies []:
+  - @tacksdk/js@0.5.0
+
 ## 0.4.0
 
 ### Minor Changes
