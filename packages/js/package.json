@@ -8,16 +8,14 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "development": "./src/index.ts",
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.mjs",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/index.js"
     },
     "./headless": {
-      "development": "./src/headless.ts",
+      "types": "./dist/headless.d.ts",
       "import": "./dist/headless.mjs",
-      "require": "./dist/headless.js",
-      "types": "./dist/headless.d.ts"
+      "require": "./dist/headless.js"
     }
   },
   "files": [

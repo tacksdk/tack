@@ -29,3 +29,43 @@ jobs:
       - run: pnpm -r lint
 
       - run: pnpm -r test
+
+  pack-smoke:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm -r build
+
+      - name: Pack tarballs
+        run: |
+          mkdir -p /tmp/packed
+          # `pnpm pack` is per-package and not recursive; --filter is rejected on
+          # pnpm 9 because pack isn't in the recursive command set. cd into each
+          # package instead — works across all pnpm versions.
+          (cd packages/js && pnpm pack --pack-destination /tmp/packed)
+          (cd packages/react && pnpm pack --pack-destination /tmp/packed)
+
+      - name: Verify src/ is NOT in tarballs
+        run: |
+          for tgz in /tmp/packed/*.tgz; do
+            if tar -tzf "$tgz" | grep -q "^package/src/"; then
+              echo "FAIL: $tgz unexpectedly ships src/ (expected dist-only package)"
+              exit 1
+            fi
+          done
+
+      - name: Smoke import in scratch consumers (Node CJS, Node ESM, Vite build)
+        run: bash scripts/pack-smoke.sh /tmp/packed
