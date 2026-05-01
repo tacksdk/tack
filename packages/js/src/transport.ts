@@ -85,7 +85,13 @@ export async function postFeedback(
   let res: Response
   let text: string
   try {
-    res = await doFetch(`${opts.endpoint}/api/v1/feedback`, {
+    // projectId goes on the URL as well as in the body. The server's CORS
+    // preflight (OPTIONS) has no body to read, so it looks up the project
+    // from the query string to find the right originAllowlist. Without this,
+    // every cross-origin call fails preflight with "no ACAO header" even
+    // when the origin IS allowlisted.
+    const url = `${opts.endpoint}/api/v1/feedback?projectId=${encodeURIComponent(opts.body.projectId)}`
+    res = await doFetch(url, {
       method: 'POST',
       headers,
       body: JSON.stringify(opts.body),
