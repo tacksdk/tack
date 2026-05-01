@@ -7,6 +7,7 @@ import type {
   TackSubmitRequest,
   TackThemePreset,
   TackUser,
+  TackWidgetConfig,
 } from '@tacksdk/js'
 
 export interface TackWidgetProps {
@@ -66,15 +67,65 @@ export interface TackWidgetProps {
    * Capture host console output. Off by default. Privacy footgun — read
    * the README before enabling. `true` captures `error` + `warn`; pass an
    * object for fine-grained control.
+   *
+   * Object identity matters: changing the reference re-mounts the dialog.
+   * Hoist or `useMemo` if you pass an object literal.
    */
   captureConsole?: boolean | CaptureConsoleConfig
   /**
-   * Called after a successful submission. Receives the server response and
-   * the full request payload. Latest reference is always used.
+   * Custom container the dialog mounts into. Default: `document.body`.
+   * Re-mounts the dialog when the element reference changes — pass a stable
+   * ref, not a freshly-queried DOM node every render.
+   */
+  container?: HTMLElement
+  /**
+   * Dialog placement relative to the trigger or viewport. See
+   * `TackWidgetConfig.placement` for accepted values.
+   */
+  placement?: TackWidgetConfig['placement']
+  /**
+   * `'auto'` (default) renders the SDK's built-in trigger button.
+   * `'none'` means the host provides its own trigger (call `handle.open()`).
+   * In `<TackWidget>` the React wrapper always renders its own button on top
+   * of whatever the core does, so this is mostly useful via `useTack`.
+   */
+  trigger?: 'auto' | 'none'
+  /** CSS z-index applied to the dialog host. Default: SDK-managed. */
+  zIndex?: number
+  /** When false, the dialog renders non-modal (`<dialog>.show()`). Default: true. */
+  modal?: boolean
+  /** When false, body scroll is not locked while the dialog is open. */
+  scrollLock?: boolean
+  /** Verbose console diagnostics from the vanilla core. */
+  debug?: boolean
+  /**
+   * Custom `fetch` implementation used for submission. Use to inject auth
+   * headers, route through a proxy, or stub in tests. Identity changes
+   * re-mount — pass a stable reference.
+   */
+  fetch?: typeof fetch
+  /**
+   * Extra headers merged into the submission request. Object identity
+   * matters: changing the reference re-mounts. Hoist or `useMemo`.
+   */
+  headers?: Record<string, string>
+  /**
+   * Custom screenshot capture function or `false` to disable the capture
+   * button entirely. Identity changes re-mount.
+   */
+  captureScreenshot?: ((el: Element) => Promise<string>) | false
+  /**
+   * Called after a successful submission. Receives the request payload.
+   * Latest reference is always used (read through a ref, no re-mount on
+   * identity change).
    */
   onSubmit?: (request: TackSubmitRequest) => void
   /** Called on submission error. Latest reference is always used. */
   onError?: (err: TackError) => void
+  /** Called when the dialog opens. Latest reference is always used. */
+  onOpen?: () => void
+  /** Called when the dialog closes. Latest reference is always used. */
+  onClose?: () => void
 }
 
 /**
@@ -83,13 +134,15 @@ export interface TackWidgetProps {
  * submit. The component itself holds nothing more than the `TackHandle`.
  *
  * Re-mounts the dialog only when the immutable-after-init props change
- * (`projectId`, `endpoint`, `theme`, `injectStyles`, copy strings).
+ * (`projectId`, `endpoint`, `theme`, `injectStyles`, copy strings, layout
+ * fields like `placement`/`zIndex`/`modal`/`container`, transport fields
+ * like `fetch`/`headers`/`captureScreenshot`).
  *
  * - `user` and `metadata` are patched on the live handle via
  *   `handle.update()` when they change — no re-mount.
- * - `onSubmit` and `onError` are read through a ref at submit time, so
- *   identity-changing callbacks (the common React pattern) never re-init
- *   the widget at all.
+ * - `onSubmit`, `onError`, `onOpen`, `onClose` are read through a ref at
+ *   call time, so identity-changing callbacks (the common React pattern)
+ *   never re-init the widget at all.
  *
  * No `useLayoutEffect` (SSR-unfriendly) and no `eslint-disable
  * react-hooks/exhaustive-deps` — every effect's dep array honestly
@@ -113,15 +166,27 @@ export function TackWidget({
   appVersion,
   rating,
   captureConsole,
+  container,
+  placement,
+  trigger,
+  zIndex,
+  modal,
+  scrollLock,
+  debug,
+  fetch: fetchImpl,
+  headers,
+  captureScreenshot,
   onSubmit,
   onError,
+  onOpen,
+  onClose,
 }: TackWidgetProps) {
   const handleRef = useRef<TackHandle | null>(null)
   // Mutable props live in a ref so the init effect reads the freshest
   // value at call time without listing them in its dep array. The init
   // body only references stable refs and the listed primitive deps.
-  const mutableRef = useRef({ user, metadata, onSubmit, onError })
-  mutableRef.current = { user, metadata, onSubmit, onError }
+  const mutableRef = useRef({ user, metadata, onSubmit, onError, onOpen, onClose })
+  mutableRef.current = { user, metadata, onSubmit, onError, onOpen, onClose }
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
@@ -139,10 +204,22 @@ export function TackWidget({
       appVersion,
       rating,
       captureConsole,
+      container,
+      placement,
+      trigger,
+      zIndex,
+      modal,
+      scrollLock,
+      debug,
+      fetch: fetchImpl,
+      headers,
+      captureScreenshot,
       user: mutableRef.current.user,
       metadata: mutableRef.current.metadata,
       onSubmit: (_result, req) => mutableRef.current.onSubmit?.(req),
       onError: (err) => mutableRef.current.onError?.(err),
+      onOpen: () => mutableRef.current.onOpen?.(),
+      onClose: () => mutableRef.current.onClose?.(),
     })
     handleRef.current = handle
     setReady(true)
@@ -151,7 +228,31 @@ export function TackWidget({
       handleRef.current = null
       setReady(false)
     }
-  }, [projectId, endpoint, theme, preset, injectStyles, title, submitLabel, cancelLabel, placeholder, hotkey, appVersion, rating, captureConsole])
+  }, [
+    projectId,
+    endpoint,
+    theme,
+    preset,
+    injectStyles,
+    title,
+    submitLabel,
+    cancelLabel,
+    placeholder,
+    hotkey,
+    appVersion,
+    rating,
+    captureConsole,
+    container,
+    placement,
+    trigger,
+    zIndex,
+    modal,
+    scrollLock,
+    debug,
+    fetchImpl,
+    headers,
+    captureScreenshot,
+  ])
 
   // Patch user/metadata on the live handle when they change. Plain
   // useEffect (not useLayoutEffect) because update() only writes in-memory
@@ -179,9 +280,10 @@ export function TackWidget({
  *
  * Re-mount semantics mirror `<TackWidget>`: only the immutable-after-init
  * fields trigger a re-init. `user`/`metadata` patch via `handle.update()`.
- * Callbacks are read through a ref so identity changes never reinit.
+ * Callbacks (`onSubmit`/`onError`/`onOpen`/`onClose`) are read through a
+ * ref so identity changes never reinit.
  */
-export function useTack(config: Parameters<typeof Tack.init>[0]): TackHandle | null {
+export function useTack(config: TackWidgetConfig): TackHandle | null {
   const {
     projectId,
     endpoint,
@@ -196,14 +298,26 @@ export function useTack(config: Parameters<typeof Tack.init>[0]): TackHandle | n
     appVersion,
     rating,
     captureConsole,
+    container,
+    placement,
+    trigger,
+    zIndex,
+    modal,
+    scrollLock,
+    debug,
+    fetch: fetchImpl,
+    headers,
+    captureScreenshot,
     user,
     metadata,
     onSubmit,
     onError,
+    onOpen,
+    onClose,
   } = config
   const handleRef = useRef<TackHandle | null>(null)
-  const mutableRef = useRef({ user, metadata, onSubmit, onError })
-  mutableRef.current = { user, metadata, onSubmit, onError }
+  const mutableRef = useRef({ user, metadata, onSubmit, onError, onOpen, onClose })
+  mutableRef.current = { user, metadata, onSubmit, onError, onOpen, onClose }
   const [, force] = useState(0)
 
   useEffect(() => {
@@ -221,10 +335,22 @@ export function useTack(config: Parameters<typeof Tack.init>[0]): TackHandle | n
       appVersion,
       rating,
       captureConsole,
+      container,
+      placement,
+      trigger,
+      zIndex,
+      modal,
+      scrollLock,
+      debug,
+      fetch: fetchImpl,
+      headers,
+      captureScreenshot,
       user: mutableRef.current.user,
       metadata: mutableRef.current.metadata,
       onSubmit: (result, req) => mutableRef.current.onSubmit?.(result, req),
       onError: (err) => mutableRef.current.onError?.(err),
+      onOpen: () => mutableRef.current.onOpen?.(),
+      onClose: () => mutableRef.current.onClose?.(),
     })
     handleRef.current = handle
     force((n) => n + 1)
@@ -232,7 +358,31 @@ export function useTack(config: Parameters<typeof Tack.init>[0]): TackHandle | n
       handle.destroy()
       handleRef.current = null
     }
-  }, [projectId, endpoint, theme, preset, injectStyles, title, submitLabel, cancelLabel, placeholder, hotkey, appVersion, rating, captureConsole])
+  }, [
+    projectId,
+    endpoint,
+    theme,
+    preset,
+    injectStyles,
+    title,
+    submitLabel,
+    cancelLabel,
+    placeholder,
+    hotkey,
+    appVersion,
+    rating,
+    captureConsole,
+    container,
+    placement,
+    trigger,
+    zIndex,
+    modal,
+    scrollLock,
+    debug,
+    fetchImpl,
+    headers,
+    captureScreenshot,
+  ])
 
   useEffect(() => {
     handleRef.current?.update({ user, metadata })

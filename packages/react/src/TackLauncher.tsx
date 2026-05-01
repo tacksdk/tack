@@ -9,6 +9,7 @@ import type {
   TackSubmitRequest,
   TackThemePreset,
   TackUser,
+  TackWidgetConfig,
 } from '@tacksdk/js'
 
 export interface TackLauncherProps {
@@ -78,9 +79,49 @@ export interface TackLauncherProps {
   rating?: false | 'thumbs' | 'stars' | 'emoji'
   /**
    * Capture host console output. Off by default. Privacy footgun — read
-   * the README before enabling.
+   * the README before enabling. Object identity matters: changing the
+   * reference re-mounts. Hoist or `useMemo` if passing an object literal.
    */
   captureConsole?: boolean | CaptureConsoleConfig
+  /**
+   * Custom container the dialog mounts into. Default: `document.body`.
+   * Re-mounts when the element reference changes — pass a stable ref.
+   */
+  container?: HTMLElement
+  /**
+   * Dialog placement relative to the trigger or viewport. See
+   * `TackWidgetConfig.placement` for accepted values.
+   */
+  placement?: TackWidgetConfig['placement']
+  /**
+   * Forwarded to the underlying widget. Defaults to `'auto'`. Setting this
+   * to `'none'` suppresses the widget's own trigger button — useful when
+   * the launcher should be the only entry point.
+   */
+  trigger?: 'auto' | 'none'
+  /** CSS z-index applied to the dialog host. Default: SDK-managed. */
+  zIndex?: number
+  /** When false, the dialog renders non-modal (`<dialog>.show()`). Default: true. */
+  modal?: boolean
+  /** When false, body scroll is not locked while the dialog is open. */
+  scrollLock?: boolean
+  /** Verbose console diagnostics from the vanilla core. */
+  debug?: boolean
+  /**
+   * Custom `fetch` implementation used for submission. Identity changes
+   * re-mount — pass a stable reference.
+   */
+  fetch?: typeof fetch
+  /**
+   * Extra headers merged into the submission request. Object identity
+   * matters: changing the reference re-mounts. Hoist or `useMemo`.
+   */
+  headers?: Record<string, string>
+  /**
+   * Custom screenshot capture function or `false` to disable the capture
+   * button entirely. Identity changes re-mount.
+   */
+  captureScreenshot?: ((el: Element) => Promise<string>) | false
   /**
    * Called after a successful submission. Receives the request payload sent
    * to the API (lets you fire your own analytics on rating, screenshot,
@@ -96,6 +137,10 @@ export interface TackLauncherProps {
  * — the launcher button is mounted to `document.body` by the core. Only
  * immutable-after-init props re-mount the launcher; `user`/`metadata` and
  * callbacks are patched via the live handle's `update()`.
+ *
+ * Note: `onOpen` / `onClose` are reserved by the launcher core to keep
+ * `aria-expanded` and visibility in sync with the dialog, so they are not
+ * exposed as props. Use `<TackWidget>` or `useTack` if you need those.
  */
 export function TackLauncher({
   projectId,
@@ -120,6 +165,16 @@ export function TackLauncher({
   appVersion,
   rating,
   captureConsole,
+  container,
+  placement,
+  trigger,
+  zIndex,
+  modal,
+  scrollLock,
+  debug,
+  fetch: fetchImpl,
+  headers,
+  captureScreenshot,
   onSubmit,
   onError,
 }: TackLauncherProps) {
@@ -152,6 +207,16 @@ export function TackLauncher({
       appVersion,
       rating,
       captureConsole,
+      container,
+      placement,
+      trigger,
+      zIndex,
+      modal,
+      scrollLock,
+      debug,
+      fetch: fetchImpl,
+      headers,
+      captureScreenshot,
       user: mutableRef.current.user,
       metadata: mutableRef.current.metadata,
       onSubmit: (_result, req) => mutableRef.current.onSubmit?.(req),
@@ -183,6 +248,16 @@ export function TackLauncher({
     appVersion,
     rating,
     captureConsole,
+    container,
+    placement,
+    trigger,
+    zIndex,
+    modal,
+    scrollLock,
+    debug,
+    fetchImpl,
+    headers,
+    captureScreenshot,
   ])
 
   useEffect(() => {
