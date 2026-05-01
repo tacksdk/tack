@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { Tack, TackError } from '@tacksdk/js'
 import type {
+  BuiltinPresetName,
   CaptureConsoleConfig,
   TackHandle,
   TackSubmitRequest,
+  TackThemePreset,
   TackUser,
 } from '@tacksdk/js'
 
@@ -16,6 +18,16 @@ export interface TackWidgetProps {
   label?: string
   /** Color scheme. "auto" follows prefers-color-scheme. */
   theme?: 'auto' | 'light' | 'dark'
+  /**
+   * Theme preset. Built-in: 'default' | 'midnight' | 'paper'. Or pass a
+   * custom `TackThemePreset` object. Resolved by the vanilla core.
+   *
+   * Note: like `theme`, changing this re-mounts the dialog. If you pass a
+   * `TackThemePreset` *object*, hoist it to a module-level constant or
+   * `useMemo` it — inline `preset={{ ... }}` will re-mount on every parent
+   * render. String preset names are referentially stable and safe to inline.
+   */
+  preset?: BuiltinPresetName | TackThemePreset
   /** Skip injecting the SDK's default stylesheet — host owns the look. */
   injectStyles?: boolean
   /** Dialog title */
@@ -88,6 +100,7 @@ export function TackWidget({
   endpoint,
   label = 'Feedback',
   theme,
+  preset,
   injectStyles,
   title,
   submitLabel,
@@ -116,6 +129,7 @@ export function TackWidget({
       projectId,
       endpoint,
       theme,
+      preset,
       injectStyles,
       title,
       submitLabel,
@@ -137,7 +151,7 @@ export function TackWidget({
       handleRef.current = null
       setReady(false)
     }
-  }, [projectId, endpoint, theme, injectStyles, title, submitLabel, cancelLabel, placeholder, hotkey, appVersion, rating, captureConsole])
+  }, [projectId, endpoint, theme, preset, injectStyles, title, submitLabel, cancelLabel, placeholder, hotkey, appVersion, rating, captureConsole])
 
   // Patch user/metadata on the live handle when they change. Plain
   // useEffect (not useLayoutEffect) because update() only writes in-memory
@@ -172,6 +186,7 @@ export function useTack(config: Parameters<typeof Tack.init>[0]): TackHandle | n
     projectId,
     endpoint,
     theme,
+    preset,
     injectStyles,
     title,
     submitLabel,
@@ -196,6 +211,7 @@ export function useTack(config: Parameters<typeof Tack.init>[0]): TackHandle | n
       projectId,
       endpoint,
       theme,
+      preset,
       injectStyles,
       title,
       submitLabel,
@@ -216,7 +232,7 @@ export function useTack(config: Parameters<typeof Tack.init>[0]): TackHandle | n
       handle.destroy()
       handleRef.current = null
     }
-  }, [projectId, endpoint, theme, injectStyles, title, submitLabel, cancelLabel, placeholder, hotkey, appVersion, rating, captureConsole])
+  }, [projectId, endpoint, theme, preset, injectStyles, title, submitLabel, cancelLabel, placeholder, hotkey, appVersion, rating, captureConsole])
 
   useEffect(() => {
     handleRef.current?.update({ user, metadata })
